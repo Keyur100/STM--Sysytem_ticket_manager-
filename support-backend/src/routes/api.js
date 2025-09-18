@@ -21,6 +21,7 @@ router.post("/auth/register", validation(require("../validators/auth.register"))
 router.post("/auth/login", validation(require("../validators/auth.login")), tryCatch(authController.login));
 router.post("/auth/refresh", tryCatch(authController.refreshToken));
 router.post("/auth/logout", authJwt, tryCatch(authController.logout));
+router.post("/auth/select-department", tryCatch(authController.selectDepartment));
 
 // Users
 router.post("/users", authJwt, rbac("user.create"), validation(require("../validators/user.create")), tryCatch(userController.createUser));

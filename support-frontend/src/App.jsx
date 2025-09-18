@@ -10,6 +10,7 @@ import AppShell from "./pages/AppShell";
 import Login from "./pages/Auth/Login";
 import Register from "./pages/Auth/Register";
 import routesConfig from "./routesConfig";
+import DepartmentSelect from "./pages/Auth/DepartmentSelction";
 
 // Recursive function to render routes including nested ones
 const renderRoutes = (routes) =>
@@ -75,6 +76,14 @@ export default function App() {
               </PublicRoute>
             }
           />
+          <Route
+            path="/select-department"
+            element={
+              <PublicRoute>
+                <DepartmentSelect />
+              </PublicRoute>
+            }
+          />
 
           {/* Protected routes wrapped in AppShell */}
           <Route element={<AppShell />}>
@@ -94,7 +103,10 @@ export default function App() {
             {renderRoutes(routesConfig)}
 
             {/* 404 fallback */}
-            <Route path="*" element={<div style={{ padding: 40 }}>404 Not Found</div>} />
+            <Route
+              path="*"
+              element={<div style={{ padding: 40 }}>404 Not Found</div>}
+            />
           </Route>
         </Routes>
       </Suspense>

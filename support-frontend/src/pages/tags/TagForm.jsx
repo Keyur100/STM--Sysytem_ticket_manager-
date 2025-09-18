@@ -25,7 +25,7 @@ export default function TagForm() {
   useEffect(() => {
     if (!isNew) {
       api.get(`/tags`).then((r) => {
-        const found = r.data.find((x) => x._id === id);
+        const found = r.data.items.find((x) => x._id === id);
         if (found) form.setValues({ name: found.name, slug: found.slug, isSystem: found.isSystem || false });
       });
     }

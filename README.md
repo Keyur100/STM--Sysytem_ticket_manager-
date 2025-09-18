@@ -185,3 +185,117 @@ module.exports = {
 - Sub-users are created by SuperAdmin.
 - SuperAdmin sees all tickets across departments.
 - Frontend UI is permission-driven.
+
+### DAIGRAM
+login + department select 
+                   ┌─────────────┐
+                   │   Login     │
+                   │(email/pass)│
+                   └─────┬──────┘
+                         │
+        ┌────────────────┴─────────────┐
+        │                              │
+      SA/NU                         SU (SubUser)
+        │                              │
+        │                              ▼
+        │                    Check Memberships
+        │                              │
+        │                       Has Departments?
+        │                       ┌─────┴─────┐
+        │                       │           │
+        ▼                       Yes         No
+  Fetch RoleData                   │        │
+  from Roles Table                  ▼        ▼
+        │                  Navigate to  Show Error:
+        │                 Department Select "No department assigned"
+        │                      Page
+        │                          │
+  issueTokensAndReturn              │
+(access + refresh + user payload)   │
+        │                          │
+        ▼                          │
+    Store in Redux                  │
+   & LocalStorage                   │
+        │                          │
+        ▼                          │
+   Navigate Dashboard               │
+                                    │
+                        User Selects Department
+                                    │
+                           selectDepartment API
+                                    │
+                          issueTokensAndReturn
+                     (access + refresh + user with department)
+                                    │
+                                    ▼
+                              Store in Redux
+                             & LocalStorage
+                                    │
+                                    ▼
+                               Navigate Dashboard
+
+----------------------------------------------------------------
++ token refresh logic
+                   ┌─────────────┐
+                   │   Login     │
+                   │(email/pass)│
+                   └─────┬──────┘
+                         │
+        ┌────────────────┴─────────────┐
+        │                              │
+      SA/NU                         SU (SubUser)
+        │                              │
+        │                              ▼
+        │                    Check Memberships
+        │                              │
+        │                       Has Departments?
+        │                       ┌─────┴─────┐
+        │                       │           │
+        ▼                       Yes         No
+  Fetch RoleData                   │        │
+  from Roles Table                  ▼        ▼
+        │                  Navigate to  Show Error:
+        │                 Department Select "No department assigned"
+        │                      Page
+        │                          │
+  issueTokensAndReturn              │
+(access + refresh + user payload)   │
+        │                          │
+        ▼                          │
+    Store in Redux                  │
+   & LocalStorage                   │
+        │                          │
+        ▼                          │
+   Navigate Dashboard               │
+                                    │
+                        User Selects Department
+                                    │
+                           selectDepartment API
+                                    │
+                          issueTokensAndReturn
+                     (access + refresh + user with department)
+                                    │
+                                    ▼
+                              Store in Redux
+                             & LocalStorage
+                                    │
+                                    ▼
+                               Navigate Dashboard
+------------Mermaid version
+flowchart TD
+    A[Login (email/pass)] --> B{User Type}
+    B -->|SA/NU| C[Fetch Role Data from Roles Table]
+    B -->|SU (SubUser)| D[Check Memberships]
+    
+    D -->|Has Departments?| E[Navigate to Department Select Page]
+    D -->|No Departments| F[Show Error: "No department assigned"]
+    
+    C --> G[issueTokensAndReturn (access + refresh + user payload)]
+    E --> G
+    G --> H[Store in Redux & LocalStorage]
+    H --> I[Navigate Dashboard]
+    
+    E --> J[User Selects Department]
+    J --> K[selectDepartment API]
+    K --> L[issueTokensAndReturn (access + refresh + user with department)]
+    L --> H

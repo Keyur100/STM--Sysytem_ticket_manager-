@@ -80,54 +80,64 @@ async function createUser(req, res) {
 // List Users
 async function listUsers(req, res) {
   try {
-    const { page = 1, limit = 10, search } = req.query;
-    const skip = (page - 1) * limit;
+    const {
+      page = 1,
+      limit = 10,
+      search,
+      sortBy = "createdAt",
+      sortOrder = "asc",
+    } = req.query;
+    const items = await UserAuth.aggregate([
+      { $match: { isDeleted: false } },
+      {
+        $lookup: {
+          from: "userprofiles", // collection name (check case-sensitive)
+          localField: "_id",
+          foreignField: "userId",
+          as: "profile",
+        },
+      },
+      { $unwind: { path: "$profile", preserveNullAndEmptyArrays: true } },
+      ...(search?.trim()
+        ? [
+            {
+              $match: {
+                "profile.name": { $regex: search.trim(), $options: "i" },
+              },
+            },
+          ]
+        : []),
+      {
+        $sort: {
+          [sortBy === "name" ? "profile.name" : sortBy]:
+            sortOrder === "desc" ? -1 : 1,
+        },
+      },
+      { $skip: (page - 1) * limit },
+      { $limit: Number(limit) },
+      {
+        $project: {
+          _id: 1,
+          email: 1,
+          createdAt: 1,
+          // auth fields
+          // flatten profile fields
+          name: "$profile.name",
+          phone: "$profile.phone",
+        },
+      },
+    ]);
 
-    // 1. Build auth query (exclude deleted)
-    const authQuery = { isDeleted: false };
-
-    // 2. If search exists, find matching userIds from profiles
-    let profileFilter = {};
-    if (search?.trim()) {
-      profileFilter.name = { $regex: search.trim(), $options: "i" };
-      const matchingProfiles = await UserProfile.find(profileFilter, "userId").lean();
-      const matchingIds = matchingProfiles.map((p) => p.userId);
-      authQuery._id = { $in: matchingIds };
-    }
-
-    // 3. Fetch user auths with pagination
-    const auths = await UserAuth.find(authQuery)
-      .skip(skip)
-      .limit(Number(limit))
-      .lean();
-
-    const total = await UserAuth.countDocuments(authQuery);
-    const userIds = auths.map((a) => a._id);
-
-    // 4. Fetch profiles for these users
-    const profiles = await UserProfile.find({ userId: { $in: userIds } }).lean();
-    const profileMap = profiles.reduce((acc, p) => {
-      acc[p.userId.toString()] = p;
-      return acc;
-    }, {});
-
-    // 5. Merge auth + profile
-    const items = auths.map((a) => ({
-      ...a,
-      ...(profileMap[a._id.toString()] || {}),
-    }));
+    const total = await UserAuth.countDocuments({ isDeleted: false });
 
     return sendSuccess(res, {
       items,
       total,
-      page: Number(page),
-      limit: Number(limit),
     });
   } catch (err) {
     return sendError(res, 500, err.message);
   }
 }
-
 
 // Update User
 async function updateUser(req, res) {
@@ -196,7 +206,7 @@ async function updateUser(req, res) {
   }
 }
 
-// Delete User (Hard Delete)
+// Delete User (Hard Delete) TODO -assign tickte to another user of same departmnet with least ticket
 async function deleteUser(req, res) {
   try {
     const { id } = req.params;

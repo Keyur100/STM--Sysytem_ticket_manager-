@@ -16,12 +16,54 @@ async function createTag(req, res) {
 
 async function listTags(req, res) {
   try {
-    const tags = await Tag.find({}).lean();
-    return sendSuccess(res, tags);
+    const { page = 1, limit = 10, search, sortBy = "name", sortOrder = "asc" } = req.query;
+    const skip = (page - 1) * limit;
+
+    // 1️⃣ Match stage for optional search
+    const matchStage = {};
+    if (search?.trim()) {
+      matchStage.name = { $regex: search.trim(), $options: "i" };
+    }
+
+    // 2️⃣ Sort stage
+    const sortStage = {};
+    sortStage[sortBy] = sortOrder === "desc" ? -1 : 1;
+
+    // 3️⃣ Aggregation pipeline with facet
+    const aggPipeline = [
+      { $match: matchStage },
+      {
+        $facet: {
+          paginatedResults: [
+            { $sort: sortStage },
+            { $skip: skip },
+            { $limit: Number(limit) },
+          ],
+          totalCount: [
+            { $count: "count" }
+          ]
+        }
+      }
+    ];
+
+    const result = await Tag.aggregate(aggPipeline);
+
+    const tags = result[0]?.paginatedResults || [];
+    const total = result[0]?.totalCount[0]?.count || 0;
+
+    return sendSuccess(res, {
+      items: tags,
+      total,
+      page: Number(page),
+      limit: Number(limit),
+      sortBy,
+      sortOrder,
+    });
   } catch (err) {
     return sendError(res, 500, err.message);
   }
 }
+
 
 async function updateTag(req, res) {
   try {

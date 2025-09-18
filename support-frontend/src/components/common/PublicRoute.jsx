@@ -20,7 +20,7 @@ export default function PublicRoute({ children }) {
   }, [auth?.user, hasPermission]);
 
   // If user is logged in, redirect to their first permitted route
-  if (auth?.user) {
+  if (auth?.user && Object.keys(auth?.user).length>0) {
     return <Navigate to={firstPermitted || "/dashboard"} replace />;
   }
 

@@ -2,7 +2,9 @@
 const RoleSchema = new Schema({
   name: { type: String, index: true, unique: true },
   permissions: [String],
-  isSystem: { type: Boolean, default: false }
+  isSystem: { type: Boolean, default: false },
+  createdAt: { type: Date, default: Date.now }
+
 });
 const Role = model("Role", RoleSchema);
 module.exports = { Role };

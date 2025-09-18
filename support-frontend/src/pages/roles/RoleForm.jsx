@@ -25,7 +25,13 @@ export default function RoleForm() {
     }
   });
 
-  useEffect(()=>{ if (!isNew) api.get("/roles").then(r=>{ const found = r.data.find(x=>x._id===id); if (found) { setRole(found); form.setValues({ name: found.name, permissions: found.permissions || [] }) } }) }, [id]);
+  useEffect(()=>{ 
+    if (!isNew) 
+    api.get("/roles").
+    then(r=>{ 
+      const found = r.data.items.find(x=>x._id===id); 
+      if (found) { setRole(found); 
+        form.setValues({ name: found.name, permissions: found.permissions || [] }) } }) }, [id]);
 
   const isSystem = role?.isSystem === true;
 

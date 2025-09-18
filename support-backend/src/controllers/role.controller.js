@@ -16,14 +16,66 @@ async function createRole(req, res) {
 }
 
 // list roles
+// list roles with aggregation
 async function listRoles(req, res) {
   try {
-    const roles = await Role.find({}).lean();
-    return sendSuccess(res, roles);
+    const {
+      page = 1,
+      limit = 10,
+      search,
+      sortBy = "createdAt",
+      sortOrder = "asc",
+    } = req.query;
+
+    const skip = (page - 1) * Number(limit);
+
+    // 1. Match stage (search filter)
+    const match = {};
+    if (search?.trim()) {
+      match.name = { $regex: search.trim(), $options: "i" };
+    }
+
+    // 2. Build sort object
+    const sort = {};
+    sort[sortBy] = sortOrder === "desc" ? -1 : 1;
+
+    // 3. Aggregation pipeline
+    const pipeline = [
+      { $match: match },
+
+      { $sort: sort },
+      {
+        $facet: {
+          items: [
+            { $skip: skip },
+            { $limit: Number(limit) },
+          ],
+          totalCount: [
+            { $count: "count" },
+          ],
+        },
+      },
+    ];
+
+    const result = await Role.aggregate(pipeline);
+
+    const items = result[0]?.items || [];
+    const total = result[0]?.totalCount[0]?.count || 0;
+
+    return sendSuccess(res, {
+      items,
+      total,
+      page: Number(page),
+      limit: Number(limit),
+      sortBy,
+      sortOrder,
+    });
   } catch (err) {
     return sendError(res, 500, err.message);
   }
 }
+
+
 
 // update role - do not allow modifying system roles
 async function updateRole(req, res) {
