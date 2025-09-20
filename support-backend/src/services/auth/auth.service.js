@@ -1,9 +1,10 @@
 ﻿const { UserAuth, UserProfile } = require("../../models/user.model");
-const { signAccess, signRefresh, saveRefreshToken, revokeRefreshToken } = require("../../utils/token.service");
+const { signAccess, signRefresh, saveRefreshToken, revokeRefreshToken, issueTokensAndReturn, verifyRefreshToken } = require("../../utils/token.service");
 const { UserMembership } = require("../../models/userMembership.model");
 const { buildUserPayload } = require("./auth.helper.service");
 const { hashPassword, comparePassword } = require("../../utils/bcrypt");
 const { Role } = require("../../models/role.model");
+const { default: mongoose } = require("mongoose");
 // for normal user register
 async function register({ email, password, name }) {
   // Check if email exists
@@ -31,51 +32,190 @@ async function register({ email, password, name }) {
   return { user, };
 }
 
+// controllers/authController.js
 async function login({ email, password }) {
-  // 1. Find auth record
   const userAuth = await UserAuth.findOne({ email, isDeleted: false, isActive: true }).lean();
-  if (!userAuth) throw new Error("Invalid email or password or User not Activate.");
+  if (!userAuth) throw new Error("Invalid email or password");
 
-  // 2. Check password
-  const valid = await comparePassword(password, userAuth.passwordHash)
+  const valid = await comparePassword(password, userAuth.passwordHash);
   if (!valid) throw new Error("Invalid email or password");
 
-  // 3. Build user payload
-  const user = await buildUserPayload(userAuth);
+  const user = await buildUserPayload(userAuth); // contains profile with `name`
 
-  // 4. Sign tokens
-  const access = signAccess({ _id: userAuth._id, email: userAuth.email });
-  const refresh = signRefresh({ _id: userAuth._id, email: userAuth.email });
-  await saveRefreshToken(userAuth._id.toString(), refresh);
+  // SuperAdmin
+  if (userAuth.type === "SA") {
+    const roleData = await Role.findOne({ name: "SuperAdmin", isSystem: true }).lean();
+    if (!roleData) throw new Error("SuperAdmin role not found. Contact admin.");
 
-  // 5. Return combined response
-  return { user, access, refresh };
+    return issueTokensAndReturn(userAuth, roleData, "SA", user, false);
+  }
+
+  // NormalUser
+  if (userAuth.type === "NU") {
+    const roleData = await Role.findOne({ name: "NormalUser", isSystem: true }).lean();
+    if (!roleData) throw new Error("NormalUser role not found. Contact admin.");
+
+    return issueTokensAndReturn(userAuth, roleData, "NU", user, false);
+  }
+
+  // SubUser → must select department later
+  if (userAuth.type === "SU") {
+    const memberships = await UserMembership.find({ userId: userAuth._id })
+      .populate("roleId", "name")
+      .populate("departmentId", "name")
+      .lean();
+
+    if (!memberships.length) throw new Error("No department assigned. Contact admin.");
+
+    return {
+      user,
+      memberships,  // frontend will use this for department selection
+      needDepartment: true
+    };
+  }
 }
+
+
+async function selectDepartment({ userId, departmentId }) {
+const [membership] = await UserMembership.aggregate([
+    {
+      $match: {
+        userId:  new mongoose.Types.ObjectId(userId),
+        departmentId:  new mongoose.Types.ObjectId(departmentId)
+      }
+    },
+    {
+      $lookup: {
+        from: 'roles',
+        localField: 'roleId',
+        foreignField: '_id',
+        as: 'role'
+      }
+    },
+    { $unwind: { path: '$role' } },
+    {
+      $lookup: {
+        from: 'departments',
+        localField: 'departmentId',
+        foreignField: '_id',
+        as: 'department'
+      }
+    },
+    { $unwind: { path: '$department' } },
+    {
+      $lookup: {
+        from: 'userauths',
+        localField: 'userId',
+        foreignField: '_id',
+        as: 'user'
+      }
+    },
+    { $unwind: { path: '$user' } },
+    {
+      $lookup: {
+        from: 'userprofiles',
+        localField: 'user._id',
+        foreignField: 'userId',
+        as: 'profile'
+      }
+    },
+    { $unwind: { path: '$profile' } },
+    {
+      $project: {
+        email: '$user.email',
+        roleId: '$role._id',
+        departmentName: '$department.name',
+        name: '$profile.name',
+        roles:"$role"
+      }
+    }
+  ]);
+
+
+  if (!membership) throw new Error("Invalid department selection");
+
+  const payload = {
+    _id: userId,
+    email: membership?.email,
+    type: "SU",
+    departmentId,
+    roles:membership?.roles._id,
+    name: membership?.name || "",
+  };
+
+  const access = signAccess(payload);
+  const refresh = signRefresh(payload);
+  await saveRefreshToken(userId.toString(), refresh);
+  payload.roles = membership?.roles
+  return { user:payload,access, refresh };
+}
+
 
 
 async function refresh(refreshToken) {
   // 1. Verify token
-  const payload = await require("../../utils/token.service").verifyRefreshToken(refreshToken);
+  const payload = await verifyRefreshToken(refreshToken);
+  if (!payload) {
+    throw new Error("Invalid or expired refresh token" );
+}
+  const userId = payload._id 
 
   // 2. Get user auth record
-  const userAuth = await UserAuth.findById(payload.sub).lean();
+  const userAuth = await UserAuth.findById(userId).lean();
   if (!userAuth) throw new Error("User missing");
 
-  // 3. Build user payload
+  // 3. Build user payload (profile, name, etc.)
   const user = await buildUserPayload(userAuth);
 
-  // 4. Sign new tokens
-  const access = signAccess({ _id: userAuth._id, email: userAuth.email });
-  const refreshNew = signRefresh({ _id: userAuth._id, email: userAuth.email });
-  await saveRefreshToken(userAuth._id.toString(), refreshNew);
+  // 4. Handle based on type
+  if (userAuth.type === "SA") {
+    const roleData = await Role.findOne({ name: "SuperAdmin", isSystem: true }).lean();
+    if (!roleData) throw new Error("SuperAdmin role not found. Contact admin.");
 
-  // 5. Return same structure as login
-  return { user, access, refresh: refreshNew };
+    return issueTokensAndReturn(userAuth, roleData, "SA", user, false);
+  }
+
+  if (userAuth.type === "NU") {
+    const roleData = await Role.findOne({ name: "NormalUser", isSystem: true }).lean();
+    if (!roleData) throw new Error("NormalUser role not found. Contact admin.");
+
+    return issueTokensAndReturn(userAuth, roleData, "NU", user, false);
+  }
+
+  if (userAuth.type === "SU") {
+    if (!payload.departmentId) {
+      throw new Error("Department missing in token. Please login again.");
+    }
+
+    const roleData = await Role.findById(payload.roles).lean();
+    if (!roleData) throw new Error("Role not found. Contact admin.");
+
+    const newPayload = {
+      _id: userAuth._id,
+      email: userAuth.email,
+      type: "SU",
+      departmentId: payload.departmentId, // carried forward from old refresh token
+      roles: roleData?._id,
+      name: user?.name || "",
+    };
+
+    const access = signAccess(newPayload);
+    const refreshNew = signRefresh(newPayload);
+    await saveRefreshToken(userAuth._id.toString(), refreshNew);
+    newPayload.roles = roleData;
+
+    return { user:newPayload, access, refresh: refreshNew, needDepartment: false };
+  }
+
+  throw new Error("Invalid user type");
 }
+
+module.exports = { refresh };
+
 
 
 async function logout(userId) {
   await revokeRefreshToken(userId);
 }
 
-module.exports = { register, login, refresh, logout };
+module.exports = { register, login, refresh, logout,selectDepartment };

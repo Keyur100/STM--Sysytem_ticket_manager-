@@ -20,7 +20,7 @@ export default function Register() {
     onSubmit: async (values, { setSubmitting, setErrors }) => {
       try {
         const res = await api.post("/auth/register", values);
-        if (res.data.success) nav("/login");
+        if (res.data) nav("/login");
       } catch (err) {
         setErrors({ email: err.response?.data?.message || "Registration failed" });
       } finally {

@@ -13,9 +13,9 @@ export default function DepartmentForm() {
   const nav = useNavigate();
   const [admins, setAdmins] = useState([]);
 
-  useEffect(() => {
-    api.get("/users").then((r) => setAdmins(r.data)).catch(() => {});
-  }, []);
+  // useEffect(() => {
+  //   api.get("/users").then((r) => setAdmins(r.data)).catch(() => {});
+  // }, []);
 
   const form = useFormik({
     initialValues: { name: "", isSystem: false, hidden: false, assignedAdmins: [] },
@@ -30,7 +30,7 @@ export default function DepartmentForm() {
   useEffect(() => {
     if (!isNew) {
       api.get("/departments").then((r) => {
-        const found = r.data.find((x) => x._id === id);
+        const found = r.data.items.find((x) => x._id === id);
         if (found) form.setValues({ name: found.name, isSystem: found.isSystem || false, hidden: found.hidden || false, assignedAdmins: found.assignedAdmins || [] });
       });
     }

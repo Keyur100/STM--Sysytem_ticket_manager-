@@ -13,7 +13,11 @@ export default function DepartmentsList() {
   const fetch = async () => { const res = await api.get("/departments"); setDepts(res.data); };
   useEffect(() => { fetch(); }, []);
 
-  const handleDelete = async (row) => { if (!confirm("Delete department?")) return; await api.delete(`/departments/${row._id}`); fetch(); };
+
+  const handleDelete = async (row) => {
+    await api.delete(`/departments/${row._id}`);
+    fetch();
+};
 
   const columns = [
     { field: "name", label: "Name" },
@@ -29,7 +33,7 @@ export default function DepartmentsList() {
         </Box>
 
         <TableWrapper
-          data={depts}
+          data={depts.items}
           columns={columns}
           onEdit={(r) => nav(`/departments/${r._id}/edit`)}
           onDelete={handleDelete}

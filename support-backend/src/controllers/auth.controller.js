@@ -4,7 +4,7 @@ const authService = require("../services/auth/auth.service");
 async function register(req, res, next) {
   try {
     const result = await authService.register(req.validatedBody || req.body);
-    return sendSuccess(res, result, "Registered");
+    return sendSuccess(res, result);
   } catch (err) {
     return sendError(res, 400, err.message);
   }
@@ -36,4 +36,12 @@ async function logout(req, res) {
     return sendError(res, 400, err.message);
   }
 }
-module.exports = { register, login, refreshToken, logout };
+async function selectDepartment(req, res) {
+  try {
+    const result = await authService.selectDepartment( {userId:req.body.userId,departmentId:req.body.departmentId});
+    return sendSuccess(res, result, "Logged in");
+  } catch (err) {
+    return sendError(res, 400, err.message);
+  }
+}
+module.exports = { register, login, refreshToken, logout,selectDepartment };

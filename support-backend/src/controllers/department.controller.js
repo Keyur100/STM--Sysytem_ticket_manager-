@@ -14,14 +14,76 @@ async function createDepartment(req, res) {
   }
 }
 
+// list departments with search, sorting, pagination
 async function listDepartments(req, res) {
   try {
-    const depts = await Department.find({}).lean();
-    return sendSuccess(res, depts);
+    const {
+      page = 1,
+      limit = 10,
+      search,
+      sortBy = "createdAt",
+      sortOrder = "asc",
+    } = req.query;
+
+    const skip = (page - 1) * Number(limit);
+
+    // 1. Match stage
+    const match = {};
+    if (search?.trim()) {
+      match.name = { $regex: search.trim(), $options: "i" };
+    }
+
+    // 2. Sort stage
+    const sort = {};
+    sort[sortBy] = sortOrder === "desc" ? -1 : 1;
+
+    // 3. Aggregation pipeline
+    const pipeline = [
+      { $match: match },
+
+      // Example: count users in each department
+      // {
+      //   $lookup: {
+      //     from: "userprofiles",   // collection name in Mongo
+      //     localField: "_id",      // Department._id
+      //     foreignField: "departmentId",
+      //     as: "users",
+      //   },
+      // },
+      // { $addFields: { userCount: { $size: "$users" } } },
+
+      { $sort: sort },
+      {
+        $facet: {
+          items: [
+            { $skip: skip },
+            { $limit: Number(limit) },
+          ],
+          totalCount: [
+            { $count: "count" },
+          ],
+        },
+      },
+    ];
+
+    const result = await Department.aggregate(pipeline);
+
+    const items = result[0]?.items || [];
+    const total = result[0]?.totalCount[0]?.count || 0;
+
+    return sendSuccess(res, {
+      items,
+      total,
+      page: Number(page),
+      limit: Number(limit),
+      sortBy,
+      sortOrder,
+    });
   } catch (err) {
     return sendError(res, 500, err.message);
   }
 }
+
 
 async function updateDepartment(req, res) {
   try {

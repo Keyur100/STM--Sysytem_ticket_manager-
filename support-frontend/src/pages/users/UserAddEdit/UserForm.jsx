@@ -38,8 +38,8 @@ export default function UserForm() {
 
   // Fetch roles, departments, and user if editing
   useEffect(() => {
-    api.get("/roles").then((r) => setRoles(r.data)).catch(() => {});
-    api.get("/departments").then((r) => setDepartments(r.data)).catch(() => {});
+    api.get("/roles").then((r) => setRoles(r.data.items)).catch(() => {});
+    api.get("/departments").then((r) => setDepartments(r.data.items)).catch(() => {});
 
     if (!isNew) {
       api.get(`/users/${id}`).then((r) => {

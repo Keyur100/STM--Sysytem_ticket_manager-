@@ -1,6 +1,6 @@
 ﻿import React, { useState } from "react";
 import { useDispatch } from "react-redux";
-import { useNavigate, useLocation, Link as RouterLink } from "react-router-dom";
+import { useNavigate, Link as RouterLink } from "react-router-dom";
 import { useFormik } from "formik";
 import * as yup from "yup";
 import { setAuth } from "../../store/slices/authSlice";
@@ -11,22 +11,30 @@ import { Visibility, VisibilityOff } from "@mui/icons-material";
 export default function Login() {
   const dispatch = useDispatch();
   const nav = useNavigate();
-  const loc = useLocation();
+  // const loc = useLocation();
   const [showPassword, setShowPassword] = useState(false);
 
   const form = useFormik({
     initialValues: { email: "", password: "" },
     validationSchema: yup.object({
       email: yup.string().email().required(),
-      password: yup.string().required()
+      password: yup.string().required(),
     }),
     onSubmit: async (v) => {
       const res = await api.post("/auth/login", v);
       const data = res.data;
-      dispatch(setAuth({ user: data.user, token: data.access }));
-      window.localStorage.setItem("refresh_token", data.refresh);
-      nav(loc.state?.from?.pathname || "/dashboard");
-    }
+
+      if (data.needDepartment) {
+        // Navigate to department selection page
+        nav("/select-department", {
+          state: { user: data.user, memberships: data.memberships },
+        });
+      } else {
+        dispatch(setAuth({ user: data.user, token: data.access }));
+        window.localStorage.setItem("refresh_token", data.refresh);
+        nav("/dashboard");
+      }
+    },
   });
 
   return (
