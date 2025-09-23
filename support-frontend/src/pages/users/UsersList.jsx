@@ -4,7 +4,6 @@ import TableWrapper from "../../components/common/TableWrapper";
 import { useNavigate } from "react-router-dom";
 import api from "../../api/axios";
 import useDebounce from "../../helpers/hooks/useDebounce";
-import usePermissions from "../../helpers/hooks/usePermissions";
 
 export default function UsersList() {
   const [users, setUsers] = useState([]);
@@ -16,7 +15,6 @@ export default function UsersList() {
   const [orderBy, setOrderBy] = useState("email");
 
   const nav = useNavigate();
-  const { hasPermission } = usePermissions();
 
   const fetch = useCallback(async () => {
     const skip = page * limit;
