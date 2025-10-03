@@ -1,0 +1,1 @@
+// walletDeduction.worker.js

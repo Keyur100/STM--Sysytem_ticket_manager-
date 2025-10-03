@@ -15,7 +15,11 @@ const validation = require("../middlewares/validation");
 const { ticketCreateSchema, ticketUpdateSchema, replyCreateSchema } = require("../validators/yupSchemas");
 const authJwt = require("../middlewares/authJwt");
 const rbac = require("../middlewares/rbac");
-// const saasRoutes = require('./saas.routes');
+const saasRoutes = require('../saas/routes');
+
+// saas require
+
+
 
 // Auth
 router.post("/auth/register", validation(require("../validators/auth.register")), tryCatch(authController.register));
@@ -77,6 +81,12 @@ router.get("/audits", authJwt, rbac("audit.read"), tryCatch(auditController.list
 
 // Analytics
 router.get("/analytics/agents", authJwt, rbac("analytics.read"), tryCatch(analyticsController.getAgentSummary));
-// router.use('/saas', saasRoutes);
+
+// ------------------- ✅ SAAS MODULE ROUTES -------------------
+router.use("/saas", saasRoutes);  // <---- Mount SaaS module here
+
+
 
 module.exports = router;
+
+

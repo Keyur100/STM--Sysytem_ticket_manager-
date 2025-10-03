@@ -9,6 +9,7 @@ import PublicRoute from "./components/common/PublicRoute";
 import AppShell from "./pages/AppShell";
 import Login from "./pages/Auth/Login";
 import Register from "./pages/Auth/Register";
+import LandingPage from "./pages/AppShell/LandingPage"
 import routesConfig from "./routesConfig";
 import DepartmentSelect from "./pages/Auth/DepartmentSelction";
 
@@ -68,11 +69,27 @@ export default function App() {
               </PublicRoute>
             }
           />
-          <Route
+          {/* <Route
             path="/register"
             element={
               <PublicRoute>
                 <Register />
+              </PublicRoute>
+            }
+          /> */}
+           <Route
+            path="/signup-company"
+            element={
+              <PublicRoute>
+                {/* <SignupCompany/> */}
+              </PublicRoute>
+            }
+          />
+          <Route
+            path="/home"
+            element={
+              <PublicRoute>
+                <LandingPage />
               </PublicRoute>
             }
           />
@@ -87,7 +104,7 @@ export default function App() {
 
           {/* Protected routes wrapped in AppShell */}
           <Route element={<AppShell />}>
-            {/* Default entry */}
+            {/* Default entry */} this logic is for provided permission route to that user 
             <Route
               path="/"
               element={

@@ -5,10 +5,11 @@ import { persistReducer, persistStore } from "redux-persist";
 
 import authReducer from "./slices/authSlice";
 import uiReducer from "./slices/uiSlice";
-
+import companyReducer from "./slices/saas/companySlice"
 const rootReducer = combineReducers({
   auth: authReducer,
   ui: uiReducer,
+  company:companyReducer
 });
 
 const persistConfig = {

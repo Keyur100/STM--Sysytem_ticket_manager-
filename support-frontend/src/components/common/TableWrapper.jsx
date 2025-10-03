@@ -15,6 +15,8 @@ import {
   Typography,
   TextField,
   Button,
+  Stack,
+  Tooltip,
 } from "@mui/material";
 import EditIcon from "@mui/icons-material/Edit";
 import DeleteIcon from "@mui/icons-material/Delete";
@@ -34,6 +36,7 @@ export default function TableWrapper({
   orderBy = "",
   onSortChange,
   onSearchChange,
+  searchPlaceHolder,
   onAdd,
   onEdit,
   onDelete,
@@ -75,7 +78,7 @@ export default function TableWrapper({
           {/* Search inside toolbar */}
           <TextField
             size="small"
-            placeholder="Search..."
+            placeholder={searchPlaceHolder || "Search..."}
             onChange={(e) => onSearchChange?.(e.target.value)}
           />
 
@@ -84,7 +87,11 @@ export default function TableWrapper({
               variant="contained"
               startIcon={<AddCircleIcon />}
               onClick={onAdd.fn}
-              sx={{ borderRadius: 2 }}
+              sx={{
+                borderRadius: 2,
+                textTransform: "none",
+                fontWeight: 600,
+              }}
             >
               {addLabel}
             </Button>
@@ -93,7 +100,14 @@ export default function TableWrapper({
       </Toolbar>
 
       {/* 🔹 Responsive Table */}
-      <TableContainer component={Paper} sx={{ borderRadius: 2, overflowX: "auto" }}>
+      <TableContainer
+        component={Paper}
+        sx={{
+          borderRadius: 2,
+          overflowX: "auto",
+          boxShadow: "0 2px 10px rgba(0,0,0,0.08)",
+        }}
+      >
         <Table size="small">
           <TableHead>
             <TableRow>
@@ -126,7 +140,13 @@ export default function TableWrapper({
 
           <TableBody>
             {data.map((row) => (
-              <TableRow key={row._id || row.userId} hover>
+              <TableRow
+                key={row._id || row.userId}
+                hover
+                sx={{
+                  "&:hover": { backgroundColor: "action.hover" },
+                }}
+              >
                 {columns.map((c) => (
                   <TableCell key={c.field}>
                     {c.render ? c.render(row) : row[c.field]}
@@ -135,24 +155,38 @@ export default function TableWrapper({
 
                 {(hasPermission(editPerm) || (!hideDelete && hasPermission(deletePerm))) && (
                   <TableCell align="center">
-                    {hasPermission(editPerm) && onEdit && (
-                      <IconButton
-                        color="primary"
-                        size="small"
-                        onClick={() => onEdit(row)}
-                      >
-                        <EditIcon fontSize="small" />
-                      </IconButton>
-                    )}
-                    {!hideDelete && hasPermission(deletePerm) && onDelete && (
-                      <IconButton
-                        color="error"
-                        size="small"
-                        onClick={() => handleDeleteClick(row)}
-                      >
-                        <DeleteIcon fontSize="small" />
-                      </IconButton>
-                    )}
+                    {/* 🔹 Horizontal Stack for Actions */}
+                    <Stack direction="row" justifyContent="center" spacing={1}>
+                      {hasPermission(editPerm) && onEdit && (
+                        <Tooltip title="Edit" arrow>
+                          <IconButton
+                            color="primary"
+                            size="small"
+                            onClick={() => onEdit(row)}
+                            sx={{
+                              "&:hover": { backgroundColor: "rgba(33, 150, 243, 0.1)" },
+                            }}
+                          >
+                            <EditIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      )}
+
+                      {!hideDelete && hasPermission(deletePerm) && onDelete && (
+                        <Tooltip title="Delete" arrow>
+                          <IconButton
+                            color="error"
+                            size="small"
+                            onClick={() => handleDeleteClick(row)}
+                            sx={{
+                              "&:hover": { backgroundColor: "rgba(244, 67, 54, 0.1)" },
+                            }}
+                          >
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      )}
+                    </Stack>
                   </TableCell>
                 )}
               </TableRow>
