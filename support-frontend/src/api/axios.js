@@ -10,6 +10,7 @@ const api = axios.create({
 });
 
 api.interceptors.request.use((cfg) => {
+  console.log("➡️ API Request:", cfg.method.toUpperCase(), cfg.url, cfg.data || cfg.params);
   const state = store.getState();
   const token = state?.auth?.token;
   if (token) cfg.headers.Authorization = `Bearer ${token}`;

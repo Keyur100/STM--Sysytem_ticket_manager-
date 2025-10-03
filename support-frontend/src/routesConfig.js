@@ -7,6 +7,7 @@ import CategoryIcon from "@mui/icons-material/Category";
 import LabelIcon from "@mui/icons-material/Label";
 import SummarizeIcon from "@mui/icons-material/Summarize";
 import WorkIcon from "@mui/icons-material/Work";
+import  Business  from "@mui/icons-material/Business";
 
 // Each route can have child routes
 const routesConfig = [
@@ -136,6 +137,30 @@ const routesConfig = [
   //   component: React.lazy(() => import("./pages/audit/AuditList")),
   //   permission: "audit.read",
   // },
+   {
+    label: "Companies",
+    icon: Business,
+    path: "/companies",
+    permission: "saas.company_read",
+    component: React.lazy(() => import("./pages/saas/company/CompanyList")),
+    routes: [
+      {
+        path: "new",
+        component: React.lazy(() => import("./pages/saas/company/CompanyFormStepper")),
+        permission: "saas.company_create",
+      },
+      {
+        path: ":id/edit",
+        component: React.lazy(() => import("./pages/saas/company/CompanyFormStepper")),
+        permission: "saas.company_update",
+      },
+      {
+        path: ":id",
+        component: React.lazy(() => import("./pages/saas/company/CompanyView")),
+        permission: "saas.company_read",
+      },
+    ],
+  },
 ];
 
 export default routesConfig;
