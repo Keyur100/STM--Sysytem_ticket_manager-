@@ -12,7 +12,7 @@ const CartSchema = new Schema({
   company: { type: Schema.Types.ObjectId, ref: 'Company', required: true, index: true },
   items: [CartItemSchema],
   couponCode: { type: String },
-  createdBy: { type: Schema.Types.ObjectId, ref: 'User' }
+  createdBy: { type: Schema.Types.ObjectId, ref: 'UserAuth' }
 }, { timestamps: true });
 
 module.exports = mongoose.model('Cart', CartSchema);

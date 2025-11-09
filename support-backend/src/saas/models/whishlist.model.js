@@ -6,7 +6,7 @@ const WishlistSchema = new Schema({
   company: { type: Schema.Types.ObjectId, ref: 'Company', required: true, index: true },
   planId: { type: Schema.Types.ObjectId, ref: 'Plan' },
   addonId: { type: Schema.Types.ObjectId, ref: 'Addon' },
-  createdBy: { type: Schema.Types.ObjectId, ref: 'User' }
+  createdBy: { type: Schema.Types.ObjectId, ref: 'UserAuth' }
 }, { timestamps: true });
 
 module.exports = mongoose.model('Wishlist', WishlistSchema);

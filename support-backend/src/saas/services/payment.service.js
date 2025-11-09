@@ -1,143 +1,149 @@
-// payment.service.js
-// src/saas/services/payment.service.js
-const Payment = require('../models/payment.model');
+const Razorpay = require('razorpay');
+const crypto = require('crypto');
+const env = require('../config/env');
 const Order = require('../models/order.model');
-const SubscriptionService = require('./subscription.service');
-const AddonService = require('./addon.service');
+const Payment = require('../models/payment.model');
+const Wallet = require('../models/wallet.model');
 const WalletService = require('./wallet.service');
-const Company = require('../models/company.model');
-const { enqueueJob } = require('../libs/jobQueue');
-const { PaymentStatus, PaymentMethod } = require('../constants/saas.constant');
+const SubscriptionService = require('./subscription.service');
+const { PaymentMethod, PaymentStatus } = require('../constants/payment.constant');
+const { OrderStatus } = require('../constants/saas.constant');
+
+const razorpay = new Razorpay({ key_id: env.RAZORPAY_KEY_ID, key_secret: env.RAZORPAY_KEY_SECRET });
 
 class PaymentService {
-  static async createPayment({ orderId, companyId, amountPaise, method, providerResponse = {}, createdBy = null }) {
-    const payment = await Payment.create({ order: orderId, company: companyId, amountPaise, method, providerResponse, status: PaymentStatus.PENDING, createdBy });
+  // create order record and (optionally) create razorpay order
+  static async createOrderAndPayment({ companyId, type, targetId, amountPaise, paymentMethod, couponCode, renewalType, createdBy, meta,plan }) {
+    // create DB order
+    const order = await Order.create({
+      company: companyId,
+      type,
+      targetId,
+      amountPaise,
+      couponCode,
+      renewalType,
+      status: OrderStatus.PENDING,
+      meta,
+      createdBy,
+      updatedBy: createdBy
+    });
 
-    // enqueue payment reconciliation for offline or if gateway slow; we set a scheduled check
-    if (method === PaymentMethod.OFFLINE) {
-      // admin must approve: create a job to notify finance/admin
-      await enqueueJob({
-        type: 'notification.notify_admin_offline_payment',
-        payload: { paymentId: payment._id, companyId },
-        scheduledAt: Date.now() + 1000
+    // wallet path (pay from wallet entirely)
+    if (paymentMethod === PaymentMethod.WALLET) {
+      // will throw if insufficient
+      await WalletService.deductAmount(companyId, amountPaise, 'ORDER_PAYMENT', null);
+      const payment = await Payment.create({
+        order: order._id, company: companyId, amountPaise, method: PaymentMethod.WALLET, status: PaymentStatus.SUCCESS, createdBy, updatedBy: createdBy
       });
-    } else {
-      // schedule reconciliation job after a delay to re-verify statuses with gateway if needed
-      await enqueueJob({
-        type: 'payment.reconcile',
-        payload: { paymentId: payment._id },
-        scheduledAt: Date.now() + 1000 * 60 * 5 // 5 minutes
-      });
+      order.payment = payment._id;
+      order.status = OrderStatus.PAID;
+      await order.save();
+
+      // apply subscription/apply addon
+      await SubscriptionService.applyPayment(order, payment,plan);
+      return { order, payment };
     }
 
-    // audit job
-    await enqueueJob({ type: 'audit.log_event', payload: { action: 'payment.create', entityType: 'Payment', entityId: payment._id, companyId }, priority: 8 });
+    // offline path: mark success immediately (if chosen)
+    if (paymentMethod === PaymentMethod.OFFLINE) {
+      const payment = await Payment.create({
+        order: order._id, company: companyId, amountPaise, method: PaymentMethod.OFFLINE, status: PaymentStatus.SUCCESS, createdBy, updatedBy: createdBy
+      });
+      order.payment = payment._id;
+      order.status = OrderStatus.PAID;
+      await order.save();
+      await SubscriptionService.applyPayment(order, payment,plan);
+      return { order, payment };
+    }
 
-    return payment;
+    // Razorpay path: create Razorpay order and Payment record (CREATED)
+    if (paymentMethod === PaymentMethod.RAZORPAY) {
+      const rzpOrder = await razorpay.orders.create({
+        amount: amountPaise,
+        currency: 'INR',
+        receipt: order._id.toString(),
+        payment_capture: 1
+      });
+
+      const payment = await Payment.create({
+        order: order._id, company: companyId, amountPaise, method: PaymentMethod.RAZORPAY, status: PaymentStatus.CREATED, providerResponse: rzpOrder, createdBy, updatedBy: createdBy
+      });
+
+      order.payment = payment._id;
+      await order.save();
+
+      return { order, payment, rzpOrder };
+    }
+
+    throw new Error('Unsupported payment method');
   }
 
-  // Called by payment gateway webhook when success
-  static async markOnlinePaymentSuccess(paymentId, transactionId, providerResponse = {}) {
-    const payment = await Payment.findById(paymentId);
+  // verify razorpay signature (for client callback) and capture
+  static async verifyRazorpayPayment({ razorpay_order_id, razorpay_payment_id, razorpay_signature,plan=null }) {
+    const expected = crypto.createHmac('sha256', env.RAZORPAY_KEY_SECRET).update(`${razorpay_order_id}|${razorpay_payment_id}`).digest('hex');
+    if (expected !== razorpay_signature) throw new Error('Invalid signature');
+
+    // find payment by providerResponse.id
+    const payment = await Payment.findOne({ 'providerResponse.id': razorpay_order_id });
     if (!payment) throw new Error('Payment not found');
+
     payment.status = PaymentStatus.SUCCESS;
-    payment.transactionId = transactionId;
-    payment.providerResponse = Object.assign(payment.providerResponse || {}, providerResponse);
+    payment.transactionId = razorpay_payment_id;
     await payment.save();
 
     const order = await Order.findById(payment.order);
-    if (!order) return { payment };
-
-    order.status = 'PAID';
+    order.status = OrderStatus.PAID;
     await order.save();
 
-    // enqueue audit + order paid job
-    await enqueueJob({ type: 'audit.log_event', payload: { action: 'payment.success', entityType: 'Payment', entityId: payment._id }, priority: 10 });
-    await enqueueJob({ type: 'order.paid', payload: { orderId: order._id, paymentId: payment._id }, priority: 10 });
-
-    // handle order types
-    if (order.type === 'PLAN') {
-      // Activate subscription synchronously, but still enqueue extra jobs for workers
-      await SubscriptionService.activateNewSubscriptionAfterPayment(order.company, (await require('../models/plan.model').findById(order.targetId)).code, payment);
-      // schedule subscription expiry job
-      const sub = await require('../models/subscription.model').findOne({ company: order.company, status: 'ACTIVE' });
-      if (sub) {
-        await enqueueJob({ type: 'subscription.expiry_schedule', payload: { subscriptionId: sub._id, companyId: order.company }, scheduledAt: sub.endDate.getTime(), priority: 10 });
-      }
-    } else if (order.type === 'ADDON') {
-      // apply addon now
-      await AddonService.applyPaidAddon(order.company, order.targetId, { payment, units: order.meta && order.meta.units });
-      await enqueueJob({ type: 'addon.applied', payload: { companyId: order.company, addonId: order.targetId, paymentId: payment._id }, priority: 8 });
-    } else if (order.type === 'WALLET_TOPUP') {
-      await WalletService.credit(order.company, order.amountPaise, { order: order._id });
-      await enqueueJob({ type: 'wallet.topup', payload: { companyId: order.company, amountPaise: order.amountPaise }, priority: 5 });
-    }
-
-    return payment;
+    // apply subscription/addon/topup
+    await SubscriptionService.applyPayment(order, payment,plan); // need to pass company's plan data 
+    return { order, payment };
   }
 
-  // Admin confirms offline/cash payment
-  static async approveOffline(paymentId, adminUserId) {
-    const payment = await Payment.findById(paymentId);
-    if (!payment) throw new Error('Payment not found');
-    payment.status = PaymentStatus.SUCCESS;
-    payment.approvedBy = adminUserId;
-    await payment.save();
+  // webhook handler: event = parsed webhook body
+  static async handleWebhook(event) {
+    // example event.payload.payment.entity
+    const payload = event.payload || {};
+    const entity = payload.payment ? payload.payment.entity : null;
+    if (!entity) return;
 
-    const order = await Order.findById(payment.order);
-    if (order) {
-      order.status = 'PAID';
-      await order.save();
-      await enqueueJob({ type: 'order.paid', payload: { orderId: order._id, paymentId: payment._id }, priority: 10 });
+    const razorpayOrderId = entity.order_id;
+    const status = (entity.status || '').toUpperCase();
+
+    const payment = await Payment.findOne({ 'providerResponse.id': razorpayOrderId }).populate('order');
+    if (!payment) return;
+
+    payment.providerResponse = entity;
+    payment.transactionId = entity.id;
+
+    if (status === 'CAPTURED' || status === 'AUTHORIZED') {
+      payment.status = PaymentStatus.SUCCESS;
+      await payment.save();
+      payment.order.status = OrderStatus.PAID;
+      await payment.order.save();
+      await SubscriptionService.applyPayment(payment.order, payment,plan);
+    } else {
+      payment.status = PaymentStatus.FAILED;
+      await payment.save();
+      payment.order.status = OrderStatus.CANCELLED;
+      await payment.order.save();
     }
-
-    // if plan order -> activate
-    if (order && order.type === 'PLAN') {
-      const plan = await require('../models/plan.model').findById(order.targetId);
-      await SubscriptionService.activateNewSubscriptionAfterPayment(payment.company, plan.code, payment, adminUserId);
-    } else if (order && order.type === 'ADDON') {
-      // admin approved offline addon => apply
-      await AddonService.adminApplyPendingAddonOnPayment(payment._id, payment.company);
-    } else if (order && order.type === 'WALLET_TOPUP') {
-      await WalletService.credit(payment.company, order.amountPaise, { approvedBy: adminUserId, order: order._id });
-    }
-
-    await enqueueJob({ type: 'audit.log_event', payload: { action: 'payment.approved_offline', entityType: 'Payment', entityId: payment._id, approvedBy: adminUserId }, priority: 10 });
-
-    return { payment, order };
   }
 
-  static async markPaymentFailed(paymentId, reason) {
-    const payment = await Payment.findById(paymentId);
-    if (!payment) throw new Error('Payment not found');
-    payment.status = PaymentStatus.FAILED;
-    payment.providerResponse = Object.assign(payment.providerResponse || {}, { failReason: reason });
-    await payment.save();
+  // cancel order before payment completes
+  static async cancelOrder(orderId, userId) {
+    const order = await Order.findById(orderId);
+    if (!order) throw new Error('Order not found');
+    if (order.status !== OrderStatus.PENDING) throw new Error('Only pending can be cancelled');
 
-    const order = await Order.findById(payment.order);
-    if (order) {
-      order.status = 'FAILED';
-      await order.save();
+    order.status = OrderStatus.CANCELLED;
+    order.updatedBy = userId;
+    await order.save();
+
+    if (order.payment) {
+      await Payment.findByIdAndUpdate(order.payment, { status: PaymentStatus.CANCELLED, updatedBy: userId });
     }
-
-    // enqueue notification to company to retry
-    await enqueueJob({ type: 'notification.payment_failed', payload: { paymentId, companyId: payment.company, reason }, priority: 8 });
-    await enqueueJob({ type: 'audit.log_event', payload: { action: 'payment.failed', entityType: 'Payment', entityId: payment._id, reason }, priority: 10 });
-
-    return { payment, order };
-  }
-
-  static async refundPayment(paymentId, amountPaise, reason, adminUserId) {
-    const payment = await Payment.findById(paymentId);
-    if (!payment) throw new Error('Payment not found');
-    payment.status = PaymentStatus.REFUNDED;
-    payment.providerResponse = Object.assign(payment.providerResponse || {}, { refund: { amountPaise, reason, refundedBy: adminUserId, refundedAt: new Date() } });
-    await payment.save();
-
-    // credit to wallet by default
-    await WalletService.credit(payment.company, amountPaise, { refundOfPayment: paymentId, reason });
-    await enqueueJob({ type: 'audit.log_event', payload: { action: 'payment.refund', entityType: 'Payment', entityId: paymentId, amountPaise, refundedBy: adminUserId }, priority: 10 });
-    return payment;
+    return order;
   }
 }
 

@@ -1,4 +1,10 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, {
+  useEffect,
+  useState,
+  useCallback,
+  useMemo,
+  memo,
+} from "react";
 import {
   Grid,
   Typography,
@@ -10,8 +16,11 @@ import {
   Divider,
   Paper,
   Box,
-  Button,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
 } from "@mui/material";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { useSelector } from "react-redux";
 import EmojiEventsIcon from "@mui/icons-material/EmojiEvents";
 import api from "../../../../api/axios";
@@ -22,7 +31,7 @@ export default function PlanSettingsStep({ form, handleChange }) {
   const [selectedPlan, setSelectedPlan] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  /** Fetch plans from API */
+  /** Fetch plans */
   const fetchPlans = useCallback(async () => {
     try {
       setLoading(true);
@@ -39,29 +48,31 @@ export default function PlanSettingsStep({ form, handleChange }) {
     fetchPlans();
   }, [fetchPlans]);
 
-  /** Select the matching plan on edit or default on create */
+  /** Select matching or default plan */
   useEffect(() => {
     if (!plans.length) return;
 
-    // const planId =
-    //   typeof form.plan === "object" ? form.plan?._id || null : form.plan || null;
-
-    // const found = plans.find((p) => String(p._id) === String(planId));
-    // if (found) {
-    //   handleSelectPlan(found);
-    //   return;
-    // }
-    if (!form.plan?._id) { // means it is for create (at create time bydefault default plan selected  )
-      const defaultPlan = plans.find((p) => p.isDefault);
-      if (defaultPlan) handleSelectPlan(defaultPlan);
+    if (form.plan && form.plan._id) {
+      const found = plans.find((p) => String(p._id) === String(form.plan._id));
+      if (found) setSelectedPlan(found);
+      return;
     }
+
+    const defaultPlan = plans.find((p) => p.isDefault);
+    if (defaultPlan) handleSelectPlan(defaultPlan);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plans]);
 
-  /** Select plan + initialize form */
+  /** Select plan */
   const handleSelectPlan = useCallback(
     (plan) => {
       if (!plan) return;
+
+      if (form.plan && form.plan._id === plan._id && checkPlanModified(form, plan)) {
+        setSelectedPlan(plan);
+        return;
+      }
+
       setSelectedPlan(plan);
 
       const planSnapshot = {
@@ -88,7 +99,6 @@ export default function PlanSettingsStep({ form, handleChange }) {
         })),
       };
 
-      // Build effectivePermissions
       const perms = {};
       planSnapshot.modulePermissions.forEach((mod) => {
         perms[mod.moduleKey] = mod.actions.map((a) => a.key);
@@ -97,24 +107,22 @@ export default function PlanSettingsStep({ form, handleChange }) {
       handleChange("plan", planSnapshot);
       handleChange("effectivePermissions", perms);
     },
-    [handleChange]
+    [form.plan, handleChange]
   );
 
-  /** Price in rupees (converted to paise for API) */
+  /** Handlers for price, duration, user limits */
   const handlePriceChange = (val) => {
     const rupees = parseFloat(val || 0);
     const updated = { ...form.plan, pricePaise: Math.round(rupees * 100) };
     handleChange("plan", updated);
   };
 
-  /** Duration change */
   const handleDurationChange = (val) => {
     const days = parseInt(val || 0, 10);
     const updated = { ...form.plan, durationDays: days };
     handleChange("plan", updated);
   };
 
-  /** Update maxProvision in plan.userPricing */
   const handleMaxProvisionChange = (key, value) => {
     const v = parseInt(value || 0, 10);
     const updated = {
@@ -124,46 +132,50 @@ export default function PlanSettingsStep({ form, handleChange }) {
     handleChange("plan", updated);
   };
 
-  /** Toggle a single permission */
-  const togglePermission = (moduleKey, actionKey) => {
-    const updatedPlan = JSON.parse(JSON.stringify(form.plan));
-    const module = updatedPlan.modulePermissions.find(
-      (m) => m.moduleKey === moduleKey
-    );
-    if (!module) return;
+  /** Toggle permission handlers */
+  const togglePermission = useCallback(
+    (moduleKey, actionKey) => {
+      const updatedPlan = JSON.parse(JSON.stringify(form.plan));
+      const module = updatedPlan.modulePermissions.find(
+        (m) => m.moduleKey === moduleKey
+      );
+      if (!module) return;
 
-    module.actions = module.actions.map((a) =>
-      a.key === actionKey ? { ...a, enabled: !a.enabled } : a
-    );
+      module.actions = module.actions.map((a) =>
+        a.key === actionKey ? { ...a, enabled: !a.enabled } : a
+      );
 
-    // update effectivePermissions too
-    const perms = { ...(form.effectivePermissions || {}) };
-    const enabledKeys = module.actions.filter((a) => a.enabled).map((a) => a.key);
-    perms[moduleKey] = enabledKeys;
+      const perms = { ...(form.effectivePermissions || {}) };
+      const enabledKeys = module.actions.filter((a) => a.enabled).map((a) => a.key);
+      perms[moduleKey] = enabledKeys;
 
-    handleChange("plan", updatedPlan);
-    handleChange("effectivePermissions", perms);
-  };
+      handleChange("plan", updatedPlan);
+      handleChange("effectivePermissions", perms);
+    },
+    [form.plan, form.effectivePermissions, handleChange]
+  );
 
-  /** Toggle all permissions for a module */
-  const toggleAllPermissions = (moduleKey) => {
-    const updatedPlan = JSON.parse(JSON.stringify(form.plan));
-    const module = updatedPlan.modulePermissions.find(
-      (m) => m.moduleKey === moduleKey
-    );
-    if (!module) return;
+  const toggleAllPermissions = useCallback(
+    (moduleKey) => {
+      const updatedPlan = JSON.parse(JSON.stringify(form.plan));
+      const module = updatedPlan.modulePermissions.find(
+        (m) => m.moduleKey === moduleKey
+      );
+      if (!module) return;
 
-    const allEnabled = module.actions.every((a) => a.enabled);
-    module.actions = module.actions.map((a) => ({ ...a, enabled: !allEnabled }));
+      const allEnabled = module.actions.every((a) => a.enabled);
+      module.actions = module.actions.map((a) => ({ ...a, enabled: !allEnabled }));
 
-    const perms = { ...(form.effectivePermissions || {}) };
-    perms[moduleKey] = module.actions
-      .filter((a) => a.enabled)
-      .map((a) => a.key);
+      const perms = { ...(form.effectivePermissions || {}) };
+      perms[moduleKey] = module.actions
+        .filter((a) => a.enabled)
+        .map((a) => a.key);
 
-    handleChange("plan", updatedPlan);
-    handleChange("effectivePermissions", perms);
-  };
+      handleChange("plan", updatedPlan);
+      handleChange("effectivePermissions", perms);
+    },
+    [form.plan, form.effectivePermissions, handleChange]
+  );
 
   const handleReset = () => {
     if (selectedPlan) handleSelectPlan(selectedPlan);
@@ -200,7 +212,7 @@ export default function PlanSettingsStep({ form, handleChange }) {
 }
 
 /* ---------------- Sidebar ---------------- */
-const PlanListSidebar = React.memo(
+const PlanListSidebar = memo(
   ({ plans, selectedPlan, loading, onSelect, form }) => {
     const themeMode = useSelector((s) => s.ui?.theme || "light");
     const plansWithModified = useMemo(() => {
@@ -247,7 +259,7 @@ const PlanListSidebar = React.memo(
 );
 
 /* ---------------- Plan Card ---------------- */
-const PlanCard = React.memo(({ plan, isSelected, isModified, onClick, themeMode }) => {
+const PlanCard = memo(({ plan, isSelected, isModified, onClick, themeMode }) => {
   const bgGradient = plan.isDefault
     ? themeMode === "light"
       ? "linear-gradient(90deg, #fff7e6, #ffe3b3)"
@@ -323,9 +335,23 @@ const PlanCard = React.memo(({ plan, isSelected, isModified, onClick, themeMode 
 });
 
 /* ---------------- Detail Panel ---------------- */
+function useDebounce(value, delay = 300) {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+
+  useEffect(() => {
+    const handler = setTimeout(() => setDebouncedValue(value), delay);
+    return () => clearTimeout(handler);
+  }, [value, delay]);
+
+  return debouncedValue;
+}
+
 const PlanDetailPanel = React.memo(
   ({ form, onPriceChange, onDurationChange, onMaxChange, togglePermission, toggleAll, handleReset }) => {
+    const [searchTerm, setSearchTerm] = useState("");
+    const debouncedSearchTerm = useDebounce(searchTerm, 300); // 300ms debounce
     const selectedPlan = form.plan;
+
     if (!selectedPlan)
       return (
         <Paper sx={{ flexGrow: 1, p: 4, borderRadius: 3, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -333,15 +359,18 @@ const PlanDetailPanel = React.memo(
         </Paper>
       );
 
+    // Filter modules based on debounced search term
+    const filteredModules = (selectedPlan.modulePermissions || []).filter((mod) =>
+      mod.displayName?.toLowerCase().includes(debouncedSearchTerm.toLowerCase()) ||
+      mod.moduleKey?.toLowerCase().includes(debouncedSearchTerm.toLowerCase())
+    );
+
     return (
       <Paper sx={{ flexGrow: 1, p: 4, borderRadius: 3, overflowY: "auto" }}>
         <Box display="flex" justifyContent="space-between" alignItems="center">
           <Typography variant="h5" fontWeight={600}>
             {selectedPlan.name}
           </Typography>
-          <Button variant="outlined" onClick={handleReset}>
-            Reset
-          </Button>
         </Box>
 
         <Box display="flex" alignItems="center" sx={{ my: 3 }}>
@@ -374,7 +403,17 @@ const PlanDetailPanel = React.memo(
           Module Permissions
         </Typography>
 
-        {(selectedPlan.modulePermissions || []).map((mod) => (
+        {/* Search Bar */}
+        <TextField
+          placeholder="Search module..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          fullWidth
+          sx={{ mb: 2 }}
+          size="small"
+        />
+
+        {filteredModules.map((mod) => (
           <ModulePermissionCard
             key={mod.moduleKey}
             mod={mod}
@@ -382,13 +421,21 @@ const PlanDetailPanel = React.memo(
             toggleAll={toggleAll}
           />
         ))}
+
+        {filteredModules.length === 0 && (
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+            No modules match your search.
+          </Typography>
+        )}
       </Paper>
     );
   }
 );
 
+
+
 /* ---------------- User Limit Fields ---------------- */
-const UserLimitFields = React.memo(({ form, onMaxChange }) => {
+const UserLimitFields = memo(({ form, onMaxChange }) => {
   const fields = [
     { key: "max_employees", label: "Max Employees" },
     { key: "max_suppliers", label: "Max Suppliers" },
@@ -419,41 +466,91 @@ const UserLimitFields = React.memo(({ form, onMaxChange }) => {
 
 /* ---------------- Module Permission Card ---------------- */
 const ModulePermissionCard = React.memo(({ mod, togglePermission, toggleAll }) => {
-  const allKeys = (mod.actions || []).map((a) => a.key);
-  const selectedKeys = mod.actions.filter((a) => a.enabled).map((a) => a.key);
-  const isAllSelected = allKeys.length > 0 && allKeys.every((k) => selectedKeys.includes(k));
+  const [actionsState, setActionsState] = useState(mod.actions || []);
+
+  // keep local state synced with parent updates
+  useEffect(() => {
+    setActionsState(mod.actions || []);
+  }, [mod.actions]);
+
+  const handleTogglePermission = useCallback(
+    (actionKey) => {
+      setActionsState((prev) =>
+        prev.map((a) =>
+          a.key === actionKey ? { ...a, enabled: !a.enabled } : a
+        )
+      );
+      togglePermission(mod.moduleKey, actionKey);
+    },
+    [mod.moduleKey, togglePermission]
+  );
+
+  const handleToggleAll = useCallback(() => {
+    const allEnabled = actionsState.every((a) => a.enabled);
+    const updated = actionsState.map((a) => ({ ...a, enabled: !allEnabled }));
+    setActionsState(updated);
+    toggleAll(mod.moduleKey);
+  }, [actionsState, mod.moduleKey, toggleAll]);
+
+  const totalCount = actionsState.length;
+  const enabledCount = actionsState.filter((a) => a.enabled).length;
+
+  const isAllSelected = totalCount > 0 && enabledCount === totalCount;
 
   return (
-    <Card sx={{ mb: 2, borderRadius: 2, boxShadow: "0 2px 8px rgba(0,0,0,0.06)" }}>
-      <CardContent>
+    <Accordion
+      sx={{
+        mb: 2,
+        borderRadius: 2,
+        boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
+      }}
+    >
+      <AccordionSummary expandIcon={<ExpandMoreIcon />}>
         <FormControlLabel
           control={
             <Checkbox
               checked={isAllSelected}
-              indeterminate={!isAllSelected && selectedKeys.length > 0}
-              onChange={() => toggleAll(mod.moduleKey, mod.actions)}
+              indeterminate={!isAllSelected && enabledCount > 0}
+              onChange={handleToggleAll}
             />
           }
-          label={<Typography fontWeight={700}>{mod.displayName || mod.moduleKey}</Typography>}
+          label={
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              <Typography fontWeight={700}>
+                {mod.displayName || mod.moduleKey}
+              </Typography>
+              <Typography
+                variant="body2"
+                color={enabledCount > 0 ? "success.main" : "text.secondary"}
+              >
+                ({enabledCount}/{totalCount} enabled)
+              </Typography>
+            </Box>
+          }
+          onClick={(e) => e.stopPropagation()}
         />
+      </AccordionSummary>
+
+      <AccordionDetails>
         <Box sx={{ pl: 3 }}>
-          {(mod.actions || []).map((action) => (
+          {actionsState.map((action) => (
             <FormControlLabel
               key={action.key}
               control={
                 <Checkbox
-                  checked={selectedKeys.includes(action.key)}
-                  onChange={() => togglePermission(mod.moduleKey, action.key)}
+                  checked={action.enabled}
+                  onChange={() => handleTogglePermission(action.key)}
                 />
               }
               label={action.displayName || action.key}
             />
           ))}
         </Box>
-      </CardContent>
-    </Card>
+      </AccordionDetails>
+    </Accordion>
   );
 });
+
 
 /* ---------------- Helpers ---------------- */
 const arrayEquals = (a = [], b = []) =>

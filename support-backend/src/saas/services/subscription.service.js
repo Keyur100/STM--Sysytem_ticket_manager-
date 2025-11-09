@@ -1,141 +1,82 @@
-// subscription.service.js
-// src/saas/services/subscription.service.js
 const Subscription = require("../models/subscription.model");
-const Plan = require("../models/plan.model");
 const Company = require("../models/company.model");
+const Plan = require("../models/plan.model");
 const Addon = require("../models/addon.model");
 const WalletService = require("./wallet.service");
-const { env, SubscriptionStatus } = require("../constants/saas.constant");
+const Refund = require("../models/refund.model");
+const { SubscriptionStatus } = require("../constants/subscription.constant");
+const env = require("../config/env");
 const { enqueueJob } = require("../libs/jobQueue");
 
+/* ---------------------------------- Helpers ---------------------------------- */
 function addDays(date, days) {
-  const d = new Date(date);
-  d.setDate(d.getDate() + days);
-  return d;
+  const result = new Date(date);
+  result.setDate(result.getDate() + days);
+  return result;
 }
 
-function daysBetween(a, b) {
-  const ms = Math.max(0, b - a);
-  return Math.ceil(ms / (24 * 3600 * 1000));
+function differenceInDays(dateLeft, dateRight) {
+  const oneDayMs = 1000 * 60 * 60 * 24;
+  const start = new Date(dateLeft).setHours(0, 0, 0, 0);
+  const end = new Date(dateRight).setHours(0, 0, 0, 0);
+  return Math.round((start - end) / oneDayMs);
 }
 
-function daysInPeriod(startDate, endDate) {
-  // exact days between start and end (inclusive/exclusive decision)
-  return daysBetween(startDate, endDate);
+/**
+ * Calculates remaining credit from old plan and amount to pay for the new plan
+ */
+async function calculatePlanUpgrade(companyId, oldSubscription, oldPlan, newPlan, payment) {
+  const totalDays = Math.max(1, differenceInDays(oldSubscription.endDate, oldSubscription.startDate));
+  const originalPricePaise = oldPlan.originalPricePaise || oldPlan.pricePaise || 0;
+  const dailyCostPaise = Math.floor(originalPricePaise / totalDays);
+
+  const today = new Date();
+  const usedDays = Math.max(0, differenceInDays(today, oldSubscription.startDate));
+  const usedAmountPaise = Math.floor(dailyCostPaise * usedDays);
+
+  const remainingAmountPaise = Math.floor(dailyCostPaise * (totalDays - usedDays));
+  const totalPaidPaise = payment.amountPaise || 0;
+  const remainingCreditPaise = Math.max(totalPaidPaise - usedAmountPaise, 0);
+
+  const newPlanPricePaise = newPlan.pricePaise || 0;
+  const newPlanAmountToPayPaise = Math.max(0, newPlanPricePaise - remainingCreditPaise);
+
+  return {
+    remainingCreditPaise,
+    newPlanAmountToPayPaise,
+  };
 }
 
-// 🔹 Now the behavior is strict:
-
-// Default plan → free or auto-assigned (no payment check).
-
-// Paid plan upgrade/new subscription → requires payment, otherwise throws
-// coupn wallet actual payment flow 
+/* ------------------------------ Service Class ------------------------------ */
 class SubscriptionService {
-  static async _createSubscriptionAndApplyToCompany({
-    companyId,
-    plan,
-    startDate = new Date(),
-    createdBy = null,
-    updatedBy = null,
-    payment = null,
-    handleAddons = false, // toggle whether we apply addons or not
-  }) {
-    const duration = plan?.durationDays || env.DEFAULT_BILLING_DAYS;
-    const endDate = addDays(startDate, duration);
+  /* -------------------------- 1️⃣ New Subscription -------------------------- */
+  static async newSubscription(companyId, plan, payment) {
+    const startDate = new Date();
+    const endDate = addDays(startDate, plan.durationDays || env.DEFAULT_BILLING_DAYS);
 
     const sub = await Subscription.create({
       company: companyId,
-      planId: plan ? plan._id : null,
-      planSnapshot: plan || {},
+      planId: plan._id,
+      planSnapshot: plan,
       startDate,
       endDate,
-      status: SubscriptionStatus.ACTIVE, //TODO if payment is not done then  PENDING_PAYMENT and payment webhook update subscription as well payment status
-      billingCycle: plan?.billingCycle|| env.DEFAULT_BILLING_CYCLE,
-      createdBy,updatedBy
+      status: SubscriptionStatus.ACTIVE,
+      paymentIds: payment?._id ? [payment._id] : [],
     });
 
-    const company = await Company.findById(companyId);
+    await Company.findByIdAndUpdate(companyId, {
+      $set: { subscription: sub._id, status: "ACTIVE", statusReason: null },
+      $push: {
+        transactions: {
+          type: "NEW_SUBSCRIPTION",
+          paymentId: payment?._id,
+          amountPaise: payment?.amountPaise || 0,
+          date: new Date(),
+        },
+      },
+    });
 
-    company.subscription = sub._id;
-    // company.plan = plan|| null;
-    // company.effectivePermissions = plan?.modulePermissions || {};
-
-    // limits
-    // if (plan?.userPricing) {
-    //   company.plan.userPricing.storageMB =
-    //     plan.userPricing.storageMB || company.plan.userPricing.storageMB 
-    //   company.plan.userPricing.max_employees = Math.max(
-    //     company.plan.userPricing.max_employees || 0,
-    //     plan.userPricing.maxUsers ||
-    //       (Array.isArray(plan.userPricing.max_employees)
-    //         ? Math.max(...plan.userPricing.max_employees)
-    //         : 0)
-    //   );
-    //   company.plan.userPricing.max_suppliers = plan.userPricing.maxSuppliers || 0;
-    //   company.plan.userPricing.max_branch = plan.userPricing.maxBranches || 0;
-    //   company.plan.userPricing.max_customers = plan.userPricing.maxClients || 0;
-    //   company.plan.userPricing.max_reseller = plan.userPricing.maxResellers || 0;
-    // }
-
-    // optional: handle addons
-    if (handleAddons) {
-      const pending = company.pendingAddons || [];
-      const onHold = (company.appliedAddons || []).filter(
-        (a) => a.status === "ON_HOLD" || a.status === "PENDING"
-      );
-      const toApply = [...pending, ...onHold];
-
-      for (const p of toApply) {
-        const addonId = p.addonId || p.addon;
-        const addon = await Addon.findById(addonId);
-        if (!addon) continue;
-        const provides = addon.provides || {};
-        for (const k of Object.keys(provides)) {
-          company.plan.userPricing[k] = (company.plan.userPricing[k] || 0) + provides[k] * (p.units || 1);
-        }
-        company.appliedAddons = company.appliedAddons || [];
-        const exists = company.appliedAddons.find(
-          (a) => a.addonId && a.addonId.toString() === addon._id.toString()
-        );
-        if (exists) {
-          exists.status = "ACTIVE";
-          exists.appliedAt = new Date();
-          exists.expiresAt = addon.durationDays
-            ? addDays(new Date(), addon.durationDays)
-            : null; //todo expirty for addons like subscription
-        } else {
-          company.appliedAddons.push({
-            addonId: addon._id,
-            units: p.units || 1,
-            status: "ACTIVE",
-            purchasedAt: p.purchasedAt || new Date(),
-            appliedAt: new Date(),
-            expiresAt: addon.durationDays
-              ? addDays(new Date(), addon.durationDays)
-              : null,
-            paymentRef: p.paymentRef || (payment ? payment._id : null),
-          });
-        }
-      }
-      company.pendingAddons = [];
-    }
-
-    // track payment
-    if (payment) {
-      company.transactions = company.transactions || [];
-      company.transactions.push({
-        type: "SUBSCRIPTION_PURCHASE",
-        amountPaise: payment.amountPaise,
-        paymentId: payment._id,
-        date: new Date(),
-      });
-    }
-
-    company.status = "ACTIVE";//TODO - EMAIL ACCEPT AT THAT TIME intially
-    company.statusReason = null;
-    await company.save();
-
-    // schedule expiry job
+    // Schedule expiry job
     await enqueueJob({
       type: "subscription.expiry_schedule",
       payload: { subscriptionId: sub._id, companyId },
@@ -146,331 +87,147 @@ class SubscriptionService {
     return sub;
   }
 
-  static async assignDefaultPlan(companyId, createdBy = null,updatedBy=null,plan,payment) {
-    return this._createSubscriptionAndApplyToCompany({
-      companyId,
-      plan,
-      createdBy,
-      updatedBy,
-      handleAddons: false,
-      payment
-    });
-  }
+  /* --------------------------- 2️⃣ Renewal Logic --------------------------- */
+  static async renewSubscription(companyId, plan, payment) {
+    const company = await Company.findById(companyId)
+    if (!company.subscription) throw new Error("No active subscription");
 
-  static async activateNewSubscriptionAfterPayment(
-    companyId,
-    planCode,
-    payment = null,
-    createdBy = null
-  ) {
-    const plan = await Plan.findOne({ code: planCode });
-    if (!plan) throw new Error("Plan not found");
+    const sub = await Subscription.findById(company.subscription);
+    const startDate = new Date(sub.endDate);
+    const endDate = addDays(startDate, plan.durationDays || env.DEFAULT_BILLING_DAYS);
 
-    // upgrade old ones
-    await Subscription.updateMany(
-      { company: companyId, status: SubscriptionStatus.ACTIVE },
-      { status: SubscriptionStatus.UPGRADED }
-    );
-
-    return this._createSubscriptionAndApplyToCompany({
-      companyId,
-      plan,
-      createdBy,
-      payment,
-      handleAddons: true,
-    });
-  }
-
-  static async scheduleDowngrade(companyId, targetPlanCode) {
-    const plan = await Plan.findOne({ code: targetPlanCode });
-    if (!plan) throw new Error("Target plan not found");
-    const sub = await Subscription.findOne({
-      company: companyId,
-      status: SubscriptionStatus.ACTIVE,
-    });
-    if (!sub)
-      throw new Error("No active subscription to schedule downgrade for");
-    sub.scheduledDowngradeTo = plan._id;
+    sub.endDate = endDate;
+    sub.paymentIds.push(payment._id);
     await sub.save();
 
-    // enqueue job to run at subscription.endDate to apply scheduled downgrade
-    await enqueueJob({
-      type: "subscription.apply_scheduled_downgrade",
-      payload: { subscriptionId: sub._id, targetPlanId: plan._id, companyId },
-      scheduledAt: sub.endDate.getTime(),
-      priority: 10,
-    });
+    await Company.updateOne(
+      { _id: companyId },
+      {
+        $push: {
+          transactions: {
+            type: "RENEWAL",
+            paymentId: payment._id,
+            amountPaise: payment.amountPaise,
+            date: new Date(),
+          },
+        },
+      }
+    );
+
     return sub;
   }
 
-  // apply scheduled downgrade when sub expires (workers will call this job)
-  static async applyScheduledDowngradeIfAny(expiredSub) {
-    if (!expiredSub.scheduledDowngradeTo) return null;
-    const targetPlan = await Plan.findById(expiredSub.scheduledDowngradeTo); // here scheduledDowngradeTo-- id??doto
-    if (!targetPlan) return null;
-    return this.activateNewSubscriptionAfterPayment(
-      expiredSub.company,
-      targetPlan.code,
-      null
-    );
+  /* ---------------------------- 3️⃣ Apply Addon ---------------------------- */
+  static async applyAddon(companyId, addonId, payment) {
+    const addon = await Addon.findById(addonId);
+    if (!addon) throw new Error("Addon not found");
+
+    const company = await Company.findById(companyId);
+    company.appliedAddons = company.appliedAddons || [];
+
+    company.appliedAddons.push({
+      addonId: addon._id,
+      units: 1,
+      status: "ACTIVE",
+      appliedAt: new Date(),
+      expiresAt: addon.durationDays ? addDays(new Date(), addon.durationDays) : null,
+      paymentRef: payment._id,
+    });
+
+    company.plan = company.plan || { userPricing: {} };
+    for (const [k, v] of Object.entries(addon.provides || {})) {
+      company.plan.userPricing[k] = (company.plan.userPricing[k] || 0) + v;
+    }
+
+    await company.save();
+    return company;
   }
 
-  // upgrade: calculates prorata credit/charge and optionally credits wallet/creates invoices
-  static async upgradePlan(
-    companyId,
-    newPlanCode,
-    opts = { proRate: false, createdBy: null, autoPayMethod: null }
-  ) {
-    const current = await Subscription.findOne({
-      company: companyId,
-      status: SubscriptionStatus.ACTIVE,
-    });
-    const newPlan = await Plan.findOne({ code: newPlanCode });
-    if (!newPlan) throw new Error("New plan not found");
+  /* -------------------- 4️⃣ Upgrade / Downgrade Plan -------------------- */
+  static async changePlan(companyId, newPlan, payment, opts = { immediate: true }) {
+    const company = await Company.findById(companyId).populate("subscription");
+    const currentSub = await Subscription.findById(company.subscription);
+    const currentPlan = currentSub ? await Plan.findById(currentSub.planId) : null;
+    const today = new Date();
 
-    // if no active subscription, treat as normal activation
-    if (!current) {
-      return this.activateNewSubscriptionAfterPayment(
-        companyId,
-        newPlanCode,
-        null, //doto -without payment how activated
-        opts.createdBy
-      );
+    if (!currentSub || !currentPlan) {
+      return this.newSubscription(companyId, newPlan, payment);
     }
 
-    // compute proration if requested
-    if (opts.proRate) {
-      const now = new Date();
-      const oldPrice = current.planSnapshot?.pricePaise || 0;
-      const newPrice = newPlan.pricePaise || 0;
-      // days in billing cycle: endDate - startDate
-      const totalDays = daysBetween(current.startDate, current.endDate) || 1;
-      const usedDays = daysBetween(current.startDate, now);
-      const remainingDays = Math.max(0, totalDays - usedDays);
-
-      // credit for old plan unused days
-      const dailyOld = Math.round(oldPrice / totalDays);
-      const credit = Math.round(dailyOld * remainingDays); //old credit
-
-      // charge for new plan for remaining days
-      const dailyNew = Math.round(newPrice / totalDays);
-      const charge = Math.round(dailyNew * remainingDays); // new charge
-
-      const netCharge = Math.max(0, charge - credit);
-      const netCredit = Math.max(0, credit - charge);
-
-      // apply credit/charge logic
-      if (netCharge > 0) {
-        // if wallet has sufficient balance and opted, debit it, else create order and leave for payment
-        if (opts.autoPayMethod === "WALLET") {
-          const deb = await WalletService.debitIfSufficient(
-            companyId,
-            netCharge
-          );
-          if (deb) {
-            // create order/payment record as paid
-            const Order = require("../models/order.model");
-            const Payment = require("../models/payment.model");
-            const order = await Order.create({
-              company: companyId,
-              type: "PLAN",
-              targetId: newPlan._id,
-              amountPaise: netCharge,
-              status: "PAID",
-              createdBy: opts.createdBy,
-            });
-            const payment = await Payment.create({
-              order: order._id,
-              company: companyId,
-              amountPaise: netCharge,
-              method: "WALLET",
-              status: "SUCCESS",
-              createdBy: opts.createdBy,
-            });
-            // proceed to upgrade
-          } else {
-            // Could not pay: create pending order
-            const Order = require("../models/order.model");
-            await Order.create({
-              company: companyId,
-              type: "PLAN",
-              targetId: newPlan._id,
-              amountPaise: netCharge,
-              status: "PENDING",
-              createdBy: opts.createdBy,
-            });
-            // enqueue payment reminder/reconciliation job
-            await enqueueJob({
-              type: "payment.reconcile",
-              payload: { companyId, planCode: newPlanCode },
-              scheduledAt: Date.now() + 1000 * 60 * 60 * 24,
-              priority: 5,
-            });
-          }
-        } else {
-          // create pending order for manual payment
-          const Order = require("../models/order.model");
-          await Order.create({
-            company: companyId,
-            type: "PLAN",
-            targetId: newPlan._id,
-            amountPaise: netCharge,
-            status: "PENDING",
-            createdBy: opts.createdBy,
-          });
-        }
-      } else if (netCredit > 0) {
-        // credit wallet
-        await WalletService.credit(companyId, netCredit, {
-          note: "prorata credit for upgrade",
-        });
-        await enqueueJob({
-          type: "audit.log_event",
-          payload: {
-            action: "prorata.credit",
-            companyId,
-            amountPaise: netCredit,
-          },
-          priority: 10,
-        });
-      }
-    }
-
-    // mark the old subscription UPGRADED and create new active one
-    current.status = SubscriptionStatus.UPGRADED;
-    await current.save();
-
-    const newSub = await this.activateNewSubscriptionAfterPayment(
+    const { remainingCreditPaise, newPlanAmountToPayPaise } = await calculatePlanUpgrade(
       companyId,
-      newPlanCode,
-      null,
-      opts.createdBy
+      currentSub,
+      currentPlan,
+      newPlan,
+      payment
     );
 
-    // enqueue audit
-    await enqueueJob({
-      type: "audit.log_event",
-      payload: { action: "subscription.upgrade", companyId, newPlanCode },
-      priority: 10,
-    });
+    if (remainingCreditPaise > 0) {
+      await WalletService.addAmount(
+        companyId,
+        remainingCreditPaise,
+        "PLAN_CREDIT",
+        payment._id
+      );
 
-    return newSub;
+      // ✅ Refund linked to paymentId
+      await Refund.create({
+        companyId,
+        subscriptionId: currentSub._id,
+        paymentId: payment._id,
+        amountPaise: remainingCreditPaise,
+        reason: `Wallet credited for unused ${
+          differenceInDays(currentSub.endDate, currentSub.startDate) -
+          differenceInDays(today, currentSub.startDate)
+        } days of ${currentPlan.name}`,
+        status: "CREDITED_TO_WALLET",
+        createdBy: payment.createdBy,
+      });
+
+      // ✅ Add a transaction entry for the refund/credit
+      await Company.findByIdAndUpdate(companyId, {
+        $push: {
+          transactions: {
+            type: "PLAN_REFUND_CREDIT",
+            paymentId: payment._id,
+            amountPaise: remainingCreditPaise,
+            date: new Date(),
+            note: "Remaining amount credited to wallet after plan cancellation/refund",
+          },
+        },
+      });
+    }
+
+    // Mark current subscription as ended
+    currentSub.isActive = false;
+    currentSub.status = newPlan.pricePaise > currentPlan.pricePaise ? "UPGRADED" : "DOWNGRADED";
+    currentSub.endDate = today;
+    currentSub.paymentIds.push(payment._id); // ✅ Link payment
+    await currentSub.save();
+
+    // Start new subscription with new plan
+    return this.newSubscription(companyId, newPlan, payment);
+  }
+
+  /* ------------------------- 5️⃣ Apply Payment Event ------------------------- */
+  static async applyPayment(order, payment, planData = null) {
+    if (order.type === "PLAN") {
+      const plan = planData || (await Plan.findById(order.targetId));
+      if (!plan) throw new Error("Plan not found");
+
+      if (order.renewalType === "RENEWAL") {
+        return this.renewSubscription(order.company, plan, payment);
+      } else if (order.renewalType === "UPGRADE" || order.renewalType === "DOWNGRADE") {
+        return this.changePlan(order.company, plan, payment);
+      } else {
+        return this.newSubscription(order.company, plan, payment);
+      }
+    } else if (order.type === "ADDON") {
+      return this.applyAddon(order.company, order.targetId, payment);
+    } else if (order.type === "WALLET_TOPUP") {
+      return WalletService.addAmount(order.company, payment.amountPaise, "RAZORPAY_TOPUP", payment._id);
+    }
   }
 }
 
 module.exports = SubscriptionService;
-
-// TODO
-// with payment  data
-
-// company.service.js
-
-// static async _createSubscriptionAndApplyToCompany({
-//   companyId,
-//   plan,
-//   createdBy = null,
-//   payment = null,
-//   handleAddons = false,
-// }) {
-//   const now = new Date();
-//   const duration = plan?.durationDays || env.DEFAULT_BILLING_DAYS;
-//   const end = addDays(now, duration);
-
-//   // create subscription
-//   const sub = await Subscription.create({
-//     company: companyId,
-//     planId: plan ? plan._id : null,
-//     planSnapshot: plan ? plan.toObject() : {},
-//     startDate: now,
-//     endDate: end,
-//     status: SubscriptionStatus.ACTIVE,
-//     billingCycle: plan?.billingCycle || env.DEFAULT_BILLING_CYCLE,
-//     createdBy,
-//     ...(payment ? { paymentId: payment._id } : {}),
-//   });
-
-//   // apply plan limits & permissions to company
-//   const patch = {
-//     plan: plan ? plan._id : null,
-//     subscription: sub._id,
-//     effectivePermissions: plan?.modulePermissions || {},
-//     storageMB: plan?.userPricing?.storageMB || 150 * 1024,
-//     max_employees: plan?.userPricing?.maxUsers || 0,
-//     max_suppliers: plan?.userPricing?.maxSuppliers || 0,
-//     max_branch: plan?.userPricing?.maxBranches || 0,
-//     max_customers: plan?.userPricing?.maxClients || 0,
-//     max_reseller: plan?.userPricing?.maxResellers || 0,
-//   };
-//   await Company.findByIdAndUpdate(companyId, patch);
-
-//   // log transaction only if payment exists
-//   if (payment) {
-//     await PaymentService.logTransaction({
-//       companyId,
-//       subscriptionId: sub._id,
-//       payment,
-//       plan,
-//       createdBy,
-//     });
-//   }
-
-//   // schedule expiry job
-//   await enqueueJob({
-//     type: "subscription.expiry_schedule",
-//     payload: { subscriptionId: sub._id, companyId },
-//     scheduledAt: end.getTime(),
-//     priority: 10,
-//   });
-
-//   // handle addons if needed
-//   if (handleAddons && plan?.addons?.length) {
-//     await SubscriptionService.attachAddons(sub._id, plan.addons, companyId);
-//   }
-
-//   return sub;
-// }
-
-// /**
-//  * Assign default plan to company (free, no payment).
-//  */
-// static async assignDefaultPlan(companyId, createdBy = null) {
-//   const plan = await Plan.findOne({ code: env.DEFAULT_PLAN_CODE });
-//   return this._createSubscriptionAndApplyToCompany({
-//     companyId,
-//     plan,
-//     createdBy,
-//     payment: null,       // no payment for free plan
-//     handleAddons: false, // default usually has no addons
-//   });
-// }
-
-// /**
-//  * Activate paid subscription after successful payment.
-//  */
-// static async activateNewSubscriptionAfterPayment(
-//   companyId,
-//   planCode,
-//   payment,
-//   createdBy = null
-// ) {
-//   if (!payment) {
-//     throw new Error("Payment is required to activate subscription");
-//   }
-
-//   const plan = await Plan.findOne({ code: planCode });
-//   if (!plan) throw new Error("Plan not found");
-
-//   // mark existing active subs as upgraded
-//   await Subscription.updateMany(
-//     { company: companyId, status: SubscriptionStatus.ACTIVE },
-//     { status: SubscriptionStatus.UPGRADED }
-//   );
-
-//   return this._createSubscriptionAndApplyToCompany({
-//     companyId,
-//     plan,
-//     createdBy,
-//     payment,
-//     handleAddons: true, // paid plans may include addons
-//   });
-// }

@@ -7,22 +7,22 @@ const env = {
 module.exports = {
   env,
   PaymentMethod: {
-    CARD: 'CARD',
-    UPI: 'UPI',
-    NETBANKING: 'NETBANKING',
+    RAZORPAY: 'RAZORPAY',
     WALLET: 'WALLET',
     OFFLINE: 'OFFLINE'
   },
   PaymentStatus: {
+    CREATED:"CREATED",
     PENDING: 'PENDING',
     SUCCESS: 'SUCCESS',
     FAILED: 'FAILED',
     REFUNDED: 'REFUNDED',
-    AWAITING_APPROVAL: 'AWAITING_APPROVAL'
+    AWAITING_APPROVAL: 'AWAITING_APPROVAL',
+    CANCELLED: "CANCELLED",
 
   },
-  RefundDestination: {
-    ORIGINAL: 'ORIGINAL', // refund to original payment method
-    WALLET: 'WALLET' // refund to internal wallet
-  }
+  // RefundDestination: {
+  //   ORIGINAL: 'ORIGINAL', // refund to original payment method
+  //   WALLET: 'WALLET' // refund to internal wallet
+  // }
 };

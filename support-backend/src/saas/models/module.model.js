@@ -14,8 +14,8 @@ const ModuleSchema = new Schema({
   ],
   isActive: { type: Boolean, default: true },
   isDeleted: { type: Boolean, default: false },
-  createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
-  updatedBy: { type: Schema.Types.ObjectId, ref: 'User' }
+  createdBy: { type: Schema.Types.ObjectId, ref: 'UserAuth' },
+  updatedBy: { type: Schema.Types.ObjectId, ref: 'UserAuth' }
 }, { timestamps: true });
 
 ModuleSchema.index({ moduleKey: 1 });

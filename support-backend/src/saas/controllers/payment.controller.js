@@ -1,28 +1,47 @@
-// src/saas/controllers/payment.controller.js
 const PaymentService = require('../services/payment.service');
+const { sendSuccess, sendError } = require('../../utils/response');
+const companyModel = require('../models/company.model');
 
-exports.gatewayWebhook = async (req, res) => {
+exports.createOrder = async (req, res) => {
   try {
-    const { paymentId, status, txId, providerResponse } = req.body;
-    if (status === 'success') {
-      const payment = await PaymentService.markOnlinePaymentSuccess(paymentId, txId, providerResponse);
-      return res.json({ success: true, payment });
-    } else {
-      await PaymentService.markPaymentFailed(paymentId, providerResponse && providerResponse.failReason);
-      return res.json({ success: false, message: 'Payment failed' });
-    }
+    const { type, targetId, amountPaise, paymentMethod, couponCode, renewalType, meta } = req.body;
+    const companyId = req.body.companyId || req.user.company; // adapt as per your auth
+    const createdBy = req.user?._id;
+    const {plan} = (await companyModel.findById(companyId, 'plan').lean());
+    const result = await PaymentService.createOrderAndPayment({ companyId, type, targetId, amountPaise, paymentMethod, couponCode, renewalType, createdBy, meta,plan });
+    return sendSuccess(res, result);
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    return sendError(res, 400, err.message);
   }
 };
 
-exports.approveOffline = async (req, res) => {
+exports.verifyClient = async (req, res) => {
   try {
-    const { paymentId } = req.body;
-    const adminId = req.user._id;
-    const result = await PaymentService.approveOffline(paymentId, adminId);
-    res.json({ success: true, data: result });
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+    const result = await PaymentService.verifyRazorpayPayment({ razorpay_order_id, razorpay_payment_id, razorpay_signature });
+    return sendSuccess(res, result);
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    return sendError(res, 400, err.message);
+  }
+};
+
+// Webhook endpoint (no auth)
+exports.webhook = async (req, res) => {
+  try {
+    await PaymentService.handleWebhook(req.body);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.cancelOrder = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const userId = req.user?._id;
+    const order = await PaymentService.cancelOrder(orderId, userId);
+    return sendSuccess(res, order);
+  } catch (err) {
+    return sendError(res, 400, err.message);
   }
 };

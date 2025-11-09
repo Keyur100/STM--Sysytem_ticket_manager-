@@ -20,9 +20,12 @@ import {
 } from "@mui/material";
 import EditIcon from "@mui/icons-material/Edit";
 import DeleteIcon from "@mui/icons-material/Delete";
-import AddCircleIcon from "@mui/icons-material/AddCircle";
+import AddCircleIcon from "@mui/icons-material/AddCircle";VisibilityIcon
+import VisibilityIcon from "@mui/icons-material/Visibility";
+
 import usePermissions from "../../helpers/hooks/usePermissions";
 import AlertDialog from "./modals/AlertDialog";
+
 
 export default function TableWrapper({
   data = [],
@@ -40,6 +43,7 @@ export default function TableWrapper({
   onAdd,
   onEdit,
   onDelete,
+  onView,
   editPerm,
   deletePerm,
   hideDelete = false,
@@ -186,6 +190,21 @@ export default function TableWrapper({
                           </IconButton>
                         </Tooltip>
                       )}
+
+{ onView && (
+  <Tooltip title="View" arrow>
+    <IconButton
+      color="secondary"
+      size="small"
+      onClick={() => onView(row)}
+      sx={{
+        "&:hover": { backgroundColor: "rgba(156, 39, 176, 0.1)" },
+      }}
+    >
+      <VisibilityIcon fontSize="small" />
+    </IconButton>
+  </Tooltip>
+)}
                     </Stack>
                   </TableCell>
                 )}

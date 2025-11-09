@@ -10,7 +10,7 @@ const UsageRecordSchema = new Schema({
   quantity: { type: Number, required: true },
   recordedAt: { type: Date, default: Date.now, index: true },
   meta: { type: Schema.Types.Mixed },
-  createdBy: { type: Schema.Types.ObjectId, ref: 'User' }
+  createdBy: { type: Schema.Types.ObjectId, ref: 'UserAuth' }
 }, { timestamps: true });
 
 UsageRecordSchema.index({ company: 1, metric: 1, recordedAt: -1 });

@@ -10,11 +10,11 @@ module.exports = {
   SubscriptionStatus: {
     ACTIVE: 'ACTIVE',
     EXPIRED: 'EXPIRED',
-    PENDING_PAYMENT: 'PENDING_PAYMENT',
-    PENDING_ACTIVATION: 'PENDING_ACTIVATION',
+    PENDING: 'PENDING',
+    // PENDING_ACTIVATION: 'PENDING_ACTIVATION',
     CANCELLED: 'CANCELLED',
-    UPGRADED: 'UPGRADED',
-    TRIAL: 'TRIAL'
+    // UPGRADED: 'UPGRADED',
+    // TRIAL: 'TRIAL'
 
   },
   BillingCycle: {
@@ -22,8 +22,8 @@ module.exports = {
     YEARLY: 'YEARLY',
     QUARTERLY: 'QUARTERLY'
   },
-  DowngradeBehavior: {
-    IMMEDIATE: 'IMMEDIATE',
-    SCHEDULE_ON_EXPIRY: 'SCHEDULE_ON_EXPIRY'
-  }
+  // DowngradeBehavior: {
+  //   IMMEDIATE: 'IMMEDIATE',
+  //   SCHEDULE_ON_EXPIRY: 'SCHEDULE_ON_EXPIRY'
+  // }
 };

@@ -82,7 +82,7 @@ export default function CompanyList() {
       field: "paymentAmount",
       label: "Amount (₹)",
       width: 120,
-      render: (r) => r.paymentAmount || "—",
+      render: (r) => r.paymentAmount || "0",
     },
     {
       field: "paymentStatus",
@@ -93,6 +93,7 @@ export default function CompanyList() {
     {
       field: "planExpiry",
       label: "Plan Expiry",
+      sortable: true,
       width: 160,
       render: (r) =>
         r.planExpiry
@@ -135,6 +136,7 @@ export default function CompanyList() {
           searchPlaceHolder={"Search by name."}
           onAdd={{ fn: () => nav("/companies/new"), perm: "company.create" }}
           onEdit={(r) => nav(`/companies/${r._id}/edit`)}
+          onView={(r) => nav(`/companies/${r._id}/view`)}
           onDelete={handleDelete}
           editPerm="company.update"
           deletePerm="company.delete"

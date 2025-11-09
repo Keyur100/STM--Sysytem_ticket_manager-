@@ -1,0 +1,11 @@
+module.exports = {
+    // Plan
+    DEFAULT_PLAN_CODE: process.env.DEFAULT_PLAN_CODE,
+    DEFAULT_BILLING_DAYS: process.env.DEFAULT_BILLING_DAYS,
+
+    // Payment
+    RAZORPAY_KEY_ID: process.env.RAZORPAY_KEY_ID,
+    RAZORPAY_KEY_SECRET: process.env.RAZORPAY_KEY_SECRET,
+    RAZORPAY_WEBHOOK_SECRET: process.env.RAZORPAY_WEBHOOK_SECRET,
+    FRONTEND_BASE_URL: process.env.FRONTEND_BASE_URL
+}

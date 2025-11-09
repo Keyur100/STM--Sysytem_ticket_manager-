@@ -13,7 +13,7 @@ module.exports = {
     ACTIVE: 'ACTIVE',
     EXPIRED: 'EXPIRED',     
     USED: 'USED',
-INACTIVE: 'INACTIVE'
+    INACTIVE: 'INACTIVE'
 
   }
 };

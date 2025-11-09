@@ -1,36 +1,116 @@
-// wallet.service.js
-// src/saas/services/wallet.service.js
 const Wallet = require('../models/wallet.model');
 const Company = require('../models/company.model');
-const { enqueueJob } = require('../libs/jobQueue');
 
 class WalletService {
-  static async createForCompany(companyId,createdBy) {
-    const w = await Wallet.create({ company: companyId, balance: 0,createdBy,
-      updatedBy:createdBy });
-    await enqueueJob({ type: 'audit.log_event', payload: { action: 'wallet.create', companyId, walletId: w._id }, priority: 9 });
-    return w;
+  /**
+   * Create a wallet for a company if not exists.
+   */
+  static async createForCompany(companyId, createdBy) {
+    const existing = await Wallet.findOne({ company: companyId });
+    if (existing) return existing;
+
+    const wallet = await Wallet.create({
+      company: companyId,
+      balance: 0,
+      transactions: [],
+      createdBy,
+      updatedBy: createdBy,
+    });
+    return wallet;
   }
 
-  static async credit(companyId, amountPaise, meta = {}) {
-    const w = await Wallet.findOneAndUpdate({ company: companyId }, { $inc: { balance: amountPaise } }, { new: true, upsert: true });
-    await Company.findByIdAndUpdate(companyId, { $push: { transactions: { type: 'WALLET_CREDIT', amountPaise, meta, date: new Date() } } });
-    await enqueueJob({ type: 'wallet.credit', payload: { companyId, amountPaise, meta }, priority: 8 });
-    return w;
-  }
-
-  static async debitIfSufficient(companyId, amountPaise) {
-    const w = await Wallet.findOneAndUpdate({ company: companyId, balance: { $gte: amountPaise } }, { $inc: { balance: -amountPaise } }, { new: true });
-    if (w) {
-      await Company.findByIdAndUpdate(companyId, { $push: { transactions: { type: 'WALLET_DEBIT', amountPaise, date: new Date() } } });
-      await enqueueJob({ type: 'wallet.debit', payload: { companyId, amountPaise }, priority: 8 });
+  /**
+   * Fetch wallet; auto-create if missing.
+   */
+  static async getWallet(companyId) {
+    let wallet = await Wallet.findOne({ company: companyId });
+    if (!wallet) {
+      wallet = await Wallet.create({ company: companyId, balance: 0, transactions: [] });
     }
-    return w;
+    return wallet;
   }
 
-  static async getBalance(companyId) {
-    const w = await Wallet.findOne({ company: companyId });
-    return w ? w.balance : 0;
+  /**
+   * Add funds to a company wallet.
+   */
+  static async addAmount(companyId, amountPaise, source = 'MANUAL', paymentId = null, description = null) {
+    if (!amountPaise || amountPaise <= 0) return;
+
+    const wallet = await this.getWallet(companyId);
+    wallet.balance = (wallet.balance || 0) + amountPaise;
+
+    wallet.transactions.push({
+      type: 'CREDIT',
+      amountPaise,
+      source,
+      paymentId,
+      description: description || source,
+      date: new Date(),
+    });
+    await wallet.save();
+
+    await Company.updateOne(
+      { _id: companyId },
+      {
+        $push: {
+          transactions: {
+            type: 'WALLET_CREDIT',
+            amountPaise,
+            source,
+            date: new Date(),
+            paymentId,
+            description: description || source,
+          },
+        },
+      }
+    );
+
+    return wallet;
+  }
+
+  /**
+   * Deduct funds (partial or full) safely from wallet.
+   */
+  static async deductAmount(companyId, amountPaise, source = 'DEBIT', paymentId = null, description = null) {
+    if (!amountPaise || amountPaise <= 0) return;
+
+    const wallet = await this.getWallet(companyId);
+    const currentBalance = wallet.balance || 0;
+
+    // ✅ Safety check
+    if (currentBalance < amountPaise) {
+      throw new Error(`Insufficient wallet balance: required ${amountPaise / 100}, available ${currentBalance / 100}`);
+    }
+
+    wallet.balance = currentBalance - amountPaise;
+
+    wallet.transactions.push({
+      type: 'DEBIT',
+      amountPaise,
+      source,
+      paymentId,
+      description: description || source,
+      date: new Date(),
+    });
+    await wallet.save();
+
+    await Company.updateOne(
+      { _id: companyId },
+      {
+        $push: {
+          transactions: {
+            type: 'WALLET_DEBIT',
+            amountPaise,
+            source,
+            date: new Date(),
+            paymentId,
+            description: description || source,
+          },
+        },
+      }
+    );
+
+    return wallet;
   }
 }
 

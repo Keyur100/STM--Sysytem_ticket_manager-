@@ -6,7 +6,7 @@ import { setAuth, clearAuth } from "../store/slices/authSlice";
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || "/api",
-  timeout: 40000,
+  timeout: 1400000,//40000
 });
 
 api.interceptors.request.use((cfg) => {

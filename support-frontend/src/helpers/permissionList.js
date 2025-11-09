@@ -145,7 +145,7 @@
 
   "saas.cart_read", "saas.cart_update", "saas.cart_checkout",
 
-  "saas.coupon_create", "saas.coupon_apply", "saas.coupon_read",
+  "saas.coupon_create", "saas.coupon_apply", "saas.coupon_read","saas.coupon_update",
 
   "saas.billing_view", "saas.billing_manage",
 

@@ -41,7 +41,7 @@ const CompanySchema = new Schema(
     }, // prepaid means automatically deduct from wallet/credit -post paid means order will create but u need to pay
     status: {
       type: String,
-      enum: ["ACTIVE", "INACTIVE", "SUSPENDED"],
+      enum: ["ACTIVE", "INACTIVE", "SUSPENDED","DRAFT"],
       default: "ACTIVE",
     },
     statusReason: { type: String },
@@ -55,8 +55,8 @@ const CompanySchema = new Schema(
 
     isActive: { type: Boolean, default: true, index: true },
     isDeleted: { type: Boolean, default: false, index: true },
-    createdBy: { type: Schema.Types.ObjectId, ref: "User" },
-    updatedBy: { type: Schema.Types.ObjectId, ref: "User" },
+    createdBy: { type: Schema.Types.ObjectId, ref: "UserAuth" },
+    updatedBy: { type: Schema.Types.ObjectId, ref: "UserAuth" },
   },
   { timestamps: true }
 );

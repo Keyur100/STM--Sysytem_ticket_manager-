@@ -17,6 +17,12 @@ router.post(
   tryCatch(companyController.signup)
 );
 
+router.post(
+  "/draft",
+  authJwt,
+  rbac("company_create"),
+  tryCatch(companyController.draft)
+);
 // Get single company
 router.get(
   "/:companyId",
@@ -24,6 +30,8 @@ router.get(
   rbac("company_read"),
   tryCatch(companyController.get)
 );
+
+router.get("/:companyId/details", authJwt, rbac("company_view"), companyController.getCompanyDetails);
 
 // Update company
 router.put(

@@ -12,8 +12,8 @@ const AddonSchema = new Schema({
   durationDays: { type: Number, default: null }, // null => permanent
   isActive: { type: Boolean, default: true },
   isDeleted: { type: Boolean, default: false },
-  createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
-  updatedBy: { type: Schema.Types.ObjectId, ref: 'User' }
+  createdBy: { type: Schema.Types.ObjectId, ref: 'UserAuth' },
+  updatedBy: { type: Schema.Types.ObjectId, ref: 'UserAuth' }
 }, { timestamps: true });
 
 module.exports = mongoose.model('Addon', AddonSchema);

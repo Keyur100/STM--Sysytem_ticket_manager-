@@ -6,10 +6,12 @@ import { persistReducer, persistStore } from "redux-persist";
 import authReducer from "./slices/authSlice";
 import uiReducer from "./slices/uiSlice";
 import companyReducer from "./slices/saas/companySlice"
+import walletReducer from "./slices/saas/walletSlice"
 const rootReducer = combineReducers({
   auth: authReducer,
   ui: uiReducer,
-  company:companyReducer
+  company:companyReducer,
+   wallet: walletReducer, 
 });
 
 const persistConfig = {

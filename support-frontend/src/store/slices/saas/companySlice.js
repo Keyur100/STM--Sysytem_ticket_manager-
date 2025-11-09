@@ -37,7 +37,7 @@ export const updateCompany = createAsyncThunk(
   "company/update",
   async ({ id, data }, { rejectWithValue }) => {
     try {
-      const res = await api.put(endpoints.company.update(id), data);
+      const res = await api.put(`/saas/company/${id}`, data);
       return res.data.data || res.data;
     } catch (error) {
       return rejectWithValue(error.response?.data || "Failed to update company");
@@ -71,6 +71,45 @@ export const getCompany = createAsyncThunk(
   }
 );
 
+// ✅ Create a draft company
+export const createDraftCompany = createAsyncThunk(
+  "company/createDraft",
+  async (payload, { rejectWithValue }) => {
+    try {
+      const res = await api.post("/saas/company/draft", payload);
+      return res.data || {};
+    } catch (error) {
+      return rejectWithValue(error.response?.data || "Failed to create draft company");
+    }
+  }
+);
+
+// ✅ Signup company (signing up a company)
+export const signupCompany = createAsyncThunk(
+  "company/signup",
+  async (payload, { rejectWithValue }) => {
+    try {
+      const res = await api.post("/saas/company/signup", payload);
+      return res.data || {};
+    } catch (error) {
+      return rejectWithValue(error.response?.data || "Failed to sign up company");
+    }
+  }
+);
+
+// saas/companySlice.js
+export const updateSignupCompany = createAsyncThunk(
+  "company/updateSignupCompany",
+  async (payload, { rejectWithValue }) => {
+    try {
+      const res = await api.post("/saas/company/update-signup", payload);
+      return res.data;
+    } catch (err) {
+      return rejectWithValue(err.response?.data || { message: "Update Signup Failed" });
+    }
+  }
+);
+
 /* -------------------------------
    🧭 Slice
 ----------------------------------*/
@@ -79,6 +118,7 @@ const companySlice = createSlice({
   name: "company",
   initialState: {
     list: [],
+    current: null,
     selected: null,
     loading: false,
     success: false,
@@ -94,6 +134,7 @@ const companySlice = createSlice({
       state.success = false;
       state.error = null;
     },
+    
   },
   extraReducers: (builder) => {
     builder
@@ -154,6 +195,21 @@ const companySlice = createSlice({
         state.error = action.payload || "Error updating company";
       })
 
+         // UPDATE SIGNUP
+    
+      .addCase(updateSignupCompany.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(updateSignupCompany.fulfilled, (state, action) => {
+        state.loading = false;
+        state.company = action.payload;
+      })
+      .addCase(updateSignupCompany.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload;
+      })
+
       /* -------------------------------
          Delete Company
       ------------------------------- */
@@ -186,6 +242,42 @@ const companySlice = createSlice({
       .addCase(getCompany.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload || "Error fetching company";
+      })
+
+      /* -------------------------------
+         Create Draft Company
+      ------------------------------- */
+      .addCase(createDraftCompany.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+        state.success = false;
+      })
+      .addCase(createDraftCompany.fulfilled, (state, action) => {
+        state.loading = false;
+        state.current = action.payload;
+        state.success = true;
+      })
+      .addCase(createDraftCompany.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload || "Error creating draft company";
+      })
+
+      /* -------------------------------
+         Signup Company
+      ------------------------------- */
+      .addCase(signupCompany.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+        state.success = false;
+      })
+      .addCase(signupCompany.fulfilled, (state, action) => {
+        state.loading = false;
+        state.current = action.payload;
+        state.success = true;
+      })
+      .addCase(signupCompany.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload || "Error signing up company";
       });
   },
 });

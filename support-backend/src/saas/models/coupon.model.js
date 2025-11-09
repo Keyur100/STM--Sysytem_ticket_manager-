@@ -1,7 +1,7 @@
 // src/saas/models/coupon.model.js
 const mongoose = require('mongoose');
 const { Schema } = mongoose;
-const { CouponType } = require('../constants/saas.constant');
+const { CouponType } = require('../constants/coupon.constant');
 
 const CouponSchema = new Schema({
   code: { type: String, required: true, unique: true, index: true },
@@ -14,7 +14,10 @@ const CouponSchema = new Schema({
   validFrom: Date,
   validTo: Date,
   eligiblePlanCodes: [String], // restrict to specific plans if needed
-  createdBy: { type: Schema.Types.ObjectId, ref: 'User' }
+  companyId: { type: Schema.Types.ObjectId, ref: 'Company', required: false }, // optional, if company-specific
+  createdBy: { type: Schema.Types.ObjectId, ref: 'UserAuth' },
+   isSystem: { type: Boolean, default: false, index: true },
+
 }, { timestamps: true });
 
 module.exports = mongoose.model('Coupon', CouponSchema);

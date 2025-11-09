@@ -4,11 +4,53 @@ const { sendSuccess, sendError } = require("../../utils/response");
 const { enqueueJob } = require("../libs/jobQueue");
 const { COMPANY_ERRORS } = require("../constants/saas.constant");
 
+// const signup = async (req, res) => {
+//   try {
+//     const payload = req.body;
+//     const createdBy = req.user?._id;
+//     const company = await CompanyService.signupCompany(payload, createdBy);
+
+//     // Audit event handled inside service
+//     return sendSuccess(res, company, "Company created successfully");
+//   } catch (err) {
+//     console.error("Error in signup:", err);
+//     return sendError(res, 500, err.message || COMPANY_ERRORS.INTERNAL_SERVER_ERROR);
+//   }
+// };
+// // controller/company.controller.js
+// const updateSignup = async (req, res) => {
+//   try {
+//     const payload = req.body;
+//     const updatedBy = req.user?._id;
+
+//     const result = await CompanyService.updateSignupCompany(payload, updatedBy);
+
+//     return sendSuccess(res, result, "Company plan updated successfully");
+//   } catch (err) {
+//     console.error("Error in updateSignup:", err);
+//     return sendError(res, 500, err.message || "Internal Server Error");
+//   }
+// };
+
 const signup = async (req, res) => {
   try {
     const payload = req.body;
     const createdBy = req.user?._id;
-    const company = await CompanyService.signupCompany(payload, createdBy);
+    const company = await CompanyService.signupOrUpdateCompany(payload, createdBy);
+
+    // Audit event handled inside service
+    return sendSuccess(res, company, "Company created successfully");
+  } catch (err) {
+    console.error("Error in signup:", err);
+    return sendError(res, 500, err.message || COMPANY_ERRORS.INTERNAL_SERVER_ERROR);
+  }
+};
+
+const draft = async (req, res) => {
+  try {
+    const payload = req.body;
+    const createdBy = req.user?._id;
+    const company = await CompanyService.createDraftCompany(payload, createdBy);
 
     // Audit event handled inside service
     return sendSuccess(res, company, "Company created successfully");
@@ -104,10 +146,30 @@ const suspend = async (req, res) => {
   }
 };
 
+const getCompanyDetails = async (req, res) => {
+  try {
+    const companyId = req.params.companyId;
+
+    // Fetch company + populate subscription
+    const company = await CompanyService.getCompanyById(companyId);
+    if (!company) return sendError(res, 404, "Company not found");
+
+    // Fetch wallet
+    const wallet = await WalletService.getWallet(companyId);
+
+    return sendSuccess(res, { company, wallet }, "Company details fetched successfully");
+  } catch (err) {
+    console.error("Error fetching company details:", err);
+    return sendError(res, 500, err.message || "Internal server error");
+  }
+};
+
 module.exports = {
   signup,
   get,
   update,
   list,
   suspend,
+  draft,
+  getCompanyDetails
 };

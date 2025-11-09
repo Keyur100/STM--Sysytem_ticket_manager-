@@ -1,128 +1,99 @@
-// src/saas/services/coupon.service.js
 const Coupon = require('../models/coupon.model');
-const { enqueueJob } = require('../libs/jobQueue');
-const { JOB_TYPES } = require('../constants/job.constant');
-const moment = require('moment');
+const { CouponType } = require('../constants/saas.constant');
+// const { AppError } = require('../../utils/error');
 
 class CouponService {
-  /**
-   * Validate coupon and compute discount in paise for a given amountPaise
-   * Returns { ok: boolean, discountPaise, reason? }
-   */
-  static async validateAndComputeDiscount({ code, amountPaise = 0, companyId = null, type = null, targetId = null }) {
-    if (!code) return { ok: false, reason: 'NO_CODE' };
-
-    const coupon = await Coupon.findOne({ code });
-    if (!coupon) return { ok: false, reason: 'INVALID_CODE' };
-
-    const now = moment();
-
-    // Validate coupon validity period
-    if (coupon.validFrom && now.isBefore(moment(coupon.validFrom)))
-      return { ok: false, reason: 'NOT_STARTED' };
-
-    if (coupon.validTo && now.isAfter(moment(coupon.validTo)))
-      return { ok: false, reason: 'EXPIRED' };
-
-    if (coupon.maxUses && coupon.maxUses > 0 && coupon.usedCount >= coupon.maxUses)
-      return { ok: false, reason: 'USED_UP' };
-
-    if (coupon.minSpendPaise && amountPaise < coupon.minSpendPaise)
-      return { ok: false, reason: 'MIN_SPEND_NOT_MET' };
-
-    // plan/addon specific eligibility
-    if (coupon.eligiblePlanCodes && coupon.eligiblePlanCodes.length && type === 'PLAN') {
-      const Plan = require('../models/plan.model');
-      const plan = await Plan.findById(targetId).lean();
-      if (!plan || !coupon.eligiblePlanCodes.includes(plan.code))
-        return { ok: false, reason: 'PLAN_NOT_ELIGIBLE' };
-    }
-
-    // Compute discount
-    let discountPaise = 0;
-    if (coupon.type === 'PERCENT') {
-      discountPaise = Math.round((amountPaise * coupon.value) / 100);
-    } else {
-      // FIXED (assume paise)
-      discountPaise = coupon.value;
-    }
-
-    // Clamp discount not to exceed total
-    discountPaise = Math.min(discountPaise, amountPaise);
-
-    return { ok: true, discountPaise, couponId: coupon._id };
+  static async create(payload, userId) {
+    payload.code = String(payload.code || "")
+      .trim()
+      .toUpperCase();
+    const exists = await Coupon.findOne({ code: payload.code });
+    if (exists) throw new Error("Coupon already exists");
+    return Coupon.create({ ...payload, createdBy: userId });
   }
 
-  /**
-   * Record coupon usage (atomic)
-   */
-  static async recordUsage(couponId, increment = 1) {
-    const res = await Coupon.findOneAndUpdate(
-      {
-        _id: couponId,
-        $or: [{ maxUses: 0 }, { $expr: { $gt: ['$maxUses', '$usedCount'] } }]
-      },
-      { $inc: { usedCount: increment } },
+  static async getAll(q = {}) {
+    const filter = {};
+
+    // Fetch global coupons if companyId is not specified
+    const globalCoupons = await Coupon.find({ companyId: null }).sort({
+      createdAt: -1,
+    });
+    const companyCoupons = await Coupon.find(filter).sort({ createdAt: -1 });
+
+    return { globalCoupons, companyCoupons };
+  }
+
+  static async getAllCoupon(q = {}) {
+    const filter = {};
+
+    await Coupon.find(filter).sort({ createdAt: -1 });
+
+    return { globalCoupons, companyCoupons };
+  }
+
+  static async getById(id) {
+    return Coupon.findById(id);
+  }
+
+  static async update(id, payload, userId) {
+    return Coupon.findByIdAndUpdate(
+      id,
+      { ...payload, updatedBy: userId },
       { new: true }
     );
+  }
 
-    if (res) {
-      await enqueueJob({
-        type: JOB_TYPES.AUDIT_LOG,
-        payload: { action: 'coupon.used', couponId },
-        priority: 9
-      });
-      return { ok: true, coupon: res };
+  static async remove(id) {
+    const doc = await Coupon.findById(id);
+    if (!doc) throw new Error("Not found");
+    return doc.deleteOne();
+  }
+
+  static async validateAndApply(code, planCode, amountPaise) {
+    const now = new Date();
+    const coupon = await Coupon.findOne({
+      code: String(code || ""),
+    });
+    if (!coupon) throw new Error("Invalid coupon");
+
+    if (coupon.validFrom && now < coupon.validFrom)
+      throw new Error("Coupon not active yet");
+    if (coupon.validTo && now > coupon.validTo)
+      throw new Error("Coupon expired");
+    if (coupon.maxUses > 0 && coupon.usedCount >= coupon.maxUses) //todo deduct -and reduce reset token time for hack
+      throw new Error("Coupon usage limit reached");
+    if ((coupon.minSpendPaise || 0) > amountPaise)
+      throw new Error("Minimum spend not met");
+    if (
+      coupon.eligiblePlanCodes &&
+      coupon.eligiblePlanCodes.length &&
+      (!planCode || !coupon.eligiblePlanCodes.includes(planCode))
+    ) {
+      throw new Error("Coupon not valid for this plan");
     }
 
-    return { ok: false, reason: 'USAGE_LIMIT_REACHED' };
-  }
-
-  /**
-   * Create new coupon
-   */
-  static async createCoupon(payload, createdBy = null) {
-    const coupon = await Coupon.create({
-      ...payload,
-      createdBy
-    });
-
-    await enqueueJob({
-      type: JOB_TYPES.AUDIT_LOG,
-      payload: { action: 'coupon.create', couponId: coupon._id },
-      priority: 9
-    });
-
-    return coupon;
-  }
-
-  /**
-   * Get coupon by code
-   */
-  static async getCoupon(code) {
-    return Coupon.findOne({ code }).lean();
-  }
-
-  /**
-   * List all coupons with pagination
-   */
-  static async list({ filter = {}, skip = 0, limit = 50 } = {}) {
-    const q = Coupon.find(filter)
-      .sort({ createdAt: -1 })
-      .skip(Number(skip))
-      .limit(Number(limit));
-
-    const [data, total] = await Promise.all([
-      q.lean(),
-      Coupon.countDocuments(filter)
-    ]);
+    let discountPaise = 0;
+    if (coupon.type === CouponType.PERCENT) {
+      discountPaise = Math.floor((amountPaise * coupon.value) / 100);
+    } else {
+      discountPaise = Math.floor(coupon.value);
+    }
+    const finalAmount = Math.max(0, amountPaise - discountPaise);
 
     return {
-      data,
-      total,
-      skip: Number(skip),
-      limit: Number(limit)
+      coupon,
+      discountPaise,
+      finalAmountPaise: finalAmount,
     };
+  }
+
+  static async incrementUsage(code) {
+    return Coupon.findOneAndUpdate(
+      { code: String(code || "").toUpperCase() },
+      { $inc: { usedCount: 1 } },
+      { new: true }
+    );
   }
 }
 

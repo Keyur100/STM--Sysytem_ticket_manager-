@@ -1,9 +1,17 @@
-// payment.route.js
-const express = require("express");
+import express from "express";
+import {
+  initiatePayment,
+  verifyPayment,
+  cancelPayment,
+  webhook,
+} from "../controllers/payment.controller.js";
+
 const router = express.Router();
-const controller = require("../controllers/payment.controller.js");
 
-router.get("/", (req, res) => controller.getAll?.(req, res));
-router.post("/", (req, res) => controller.create?.(req, res));
-
-module.exports = router;
+router.post("/initiate", initiatePayment);
+router.post("/verify", verifyPayment);
+router.post("/cancel/:orderId", cancelPayment);
+// router.post("/coupon/apply", applyCoupon);
+// razorpay webhook (no auth)
+router.post('/webhook', tryCatch(webhook));
+export default router;

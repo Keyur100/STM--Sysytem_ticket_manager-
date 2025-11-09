@@ -34,8 +34,8 @@ const PlanSchema = new Schema({
   taxName: { type: String, default: "GST" },
   taxIncluded: { type: Boolean, default: true },
 
-  createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
-  updatedBy: { type: Schema.Types.ObjectId, ref: 'User' }
+  createdBy: { type: Schema.Types.ObjectId, ref: 'UserAuth' },
+  updatedBy: { type: Schema.Types.ObjectId, ref: 'UserAuth' }
 }, { timestamps: true });
 
 
