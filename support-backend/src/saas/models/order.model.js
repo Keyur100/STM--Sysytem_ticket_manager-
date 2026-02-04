@@ -34,7 +34,7 @@ const OrderSchema = new Schema({
       'ADDON_PURCHASE',
       'WALLET_TOPUP'
     ],
-    required: true
+    required: true,
   },
 
   upgradeFromSubscriptionId: { type: Schema.Types.ObjectId, ref: 'Subscription' },
