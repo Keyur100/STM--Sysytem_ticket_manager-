@@ -11,13 +11,13 @@ const WalletTxSchema = new Schema({
 }, { _id: false });
 
 const WalletSchema = new Schema({
-  company: { type: Schema.Types.ObjectId, ref: 'Company', required: true, unique: true, index: true },
-  balance: { type: Number, default: 0 }, // paise
+  companyId: { type: Schema.Types.ObjectId, index: true, required: true },
+  balancePaise: { type: Number, default: 0 },
   currency: { type: String, default: 'INR' },
   isActive: { type: Boolean, default: true },
   transactions: { type: [WalletTxSchema], default: [] },
-  createdBy: { type: Schema.Types.ObjectId, ref: 'UserAuth' },
-  updatedBy: { type: Schema.Types.ObjectId, ref: 'UserAuth' }
+  createdBy: { type: Schema.Types.ObjectId, ref: 'UserAuth' }
 }, { timestamps: true });
+WalletSchema.index({ companyId: 1 });
 
 module.exports = mongoose.model('Wallet', WalletSchema);

@@ -23,6 +23,7 @@ import {
 } from "../../../store/slices/saas/walletSlice";
 import { getCompany } from "../../../store/slices/saas/companySlice";
 import usePermissions from "../../../helpers/hooks/usePermissions";
+import api from "../../../api/axios";
 
 const CompanyView = React.memo(() => {
   const { companyId } = useParams();
@@ -38,6 +39,22 @@ const CompanyView = React.memo(() => {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogMode, setDialogMode] = useState("add");
   const [amount, setAmount] = useState("");
+  const [transactions, setTransactions] = useState([]);
+  const [loadingTransactions, setLoadingTransactions] = useState(false);
+
+  // ✅ Define fetchTransactions FIRST (before other callbacks that use it)
+  const fetchTransactions = useCallback(async (id) => {
+    setLoadingTransactions(true);
+    try {
+      const res = await api.get(`/saas/company/${id}/transactions?limit=50&page=1`);
+      setTransactions(res.data?.transactions || []);
+    } catch (err) {
+      console.error("Error fetching transactions:", err);
+      setSnackbar({ open: true, message: "Failed to fetch transactions", severity: "error" });
+    } finally {
+      setLoadingTransactions(false);
+    }
+  }, []);
 
   const handleCloseSnackbar = useCallback(() => setSnackbar((prev) => ({ ...prev, open: false })), []);
   const openWalletDialog = useCallback((mode) => { setDialogMode(mode); setDialogOpen(true); }, []);
@@ -57,23 +74,25 @@ const CompanyView = React.memo(() => {
         setSnackbar({ open: true, message: "Balance added successfully!", severity: "success" });
       } else {
         await dispatch(deductWalletBalance(payload)).unwrap();
-      dispatch(getCompany(companyId));
+        dispatch(getCompany(companyId));
 
         setSnackbar({ open: true, message: "Balance deducted successfully!", severity: "success" });
       }
       dispatch(getWallet(companyId));
+      fetchTransactions(companyId);
       handleDialogClose();
     } catch (err) {
       setSnackbar({ open: true, message: err?.message || "Action failed", severity: "error" });
     }
-  }, [dispatch, companyId, amount, dialogMode, handleDialogClose]);
+  }, [dispatch, companyId, amount, dialogMode, handleDialogClose, fetchTransactions]);
 
   useEffect(() => {
     if (companyId) {
       dispatch(getCompany(companyId));
       dispatch(getWallet(companyId));
+      fetchTransactions(companyId);
     }
-  }, [dispatch, companyId]);
+  }, [dispatch, companyId, fetchTransactions]);
 
   const planData = selected?.plan || {};
 
@@ -121,7 +140,7 @@ const CompanyView = React.memo(() => {
       {/* Wallet */}
       <Paper sx={{ p: 3, mb: 3, borderRadius: 2, background: getGradient("#e0f7fa", "#b2ebf2", "#004d40", "#00695c") }}>
         <Typography variant="h6" fontWeight="bold" mb={2}>Wallet</Typography>
-        <Typography fontWeight="bold" mb={2}>Current Balance: ₹{wallet?.balance ? wallet.balance / 100 : 0}</Typography>
+        <Typography fontWeight="bold" mb={2}>Current Balance: ₹{wallet?.balancePaise ? wallet.balancePaise / 100 : 0}</Typography>
         {hasPermission("saas.wallet_topup") && (
           <Box display="flex" gap={2} flexWrap="wrap">
             <Button
@@ -156,26 +175,36 @@ const CompanyView = React.memo(() => {
         }}
       >
         <Typography variant="h6" fontWeight="bold" mb={2}>Transactions</Typography>
-        {selected?.transactions?.length ? (
-          selected.transactions.map((txn, idx) => (
+        {loadingTransactions ? (
+          <Box display="flex" justifyContent="center" p={2}>
+            <CircularProgress size={30} />
+          </Box>
+        ) : transactions?.length ? (
+          transactions.map((txn, idx) => (
             <Paper
               key={idx}
               sx={{
                 p: 2,
                 mb: 1,
                 borderRadius: 2,
-                background: txn.type.includes("CREDIT")
-                  ? getGradient("#d0f0c0", "#a8e6a2", "#00695c", "#00897b")
-                  : getGradient("#f8d7da", "#f1a2a5", "#b71c1c", "#c62828"),
+                background: 
+                  txn.type === "WALLET_CREDIT" || txn.type === "REFUND"
+                    ? getGradient("#d0f0c0", "#a8e6a2", "#00695c", "#00897b")
+                    : getGradient("#f8d7da", "#f1a2a5", "#b71c1c", "#c62828"),
               }}
             >
               <Typography fontWeight="bold">
-                {txn.type === "NEW_SUBSCRIPTION" ? "📦 Subscription Purchase" :
-                 txn.type === "WALLET_CREDIT" ? "💰 Wallet Credit" : "💸 Wallet Debit"}
+                {txn.type === "SUBSCRIPTION_PURCHASE" ? "📦 Subscription Purchase" :
+                 txn.type === "WALLET_CREDIT" ? "💰 Wallet Credit" :
+                 txn.type === "WALLET_DEBIT" ? "💸 Wallet Debit" :
+                 txn.type === "REFUND" ? "🔄 Refund" :
+                 txn.type === "ADJUSTMENT" ? "⚙️ Adjustment" : "📝 " + txn.type}
               </Typography>
-              <Typography>Amount: ₹{txn.amountPaise / 100}</Typography>
+              <Typography>Amount: ₹{(txn.amountPaise / 100).toFixed(2)}</Typography>
+              <Typography variant="body2">Source: {txn.source || "-"}</Typography>
+              {txn.description && <Typography variant="body2">Description: {txn.description}</Typography>}
               <Typography variant="body2" color="text.secondary">
-                Date: {txn.date ? new Date(txn.date).toLocaleString() : "-"}
+                Date: {txn.createdAt ? new Date(txn.createdAt).toLocaleString() : "-"}
               </Typography>
             </Paper>
           ))

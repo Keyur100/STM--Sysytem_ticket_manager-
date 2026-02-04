@@ -12,7 +12,7 @@ const couponData = [
     maxUses: 100,
     usedCount: 0,
     validFrom: new Date("2025-01-01"),
-    validTo: new Date("2025-12-31"),
+    validTo: new Date("2027-12-31"),
     eligiblePlanCodes: ["BASIC_MONTHLY_XS", "BASIC_MONTHLY_S"], // eligible for XS and S plans
     companyId: null, // Global coupon
     createdBy: null, // Will be updated dynamically in seed script
@@ -27,7 +27,7 @@ const couponData = [
     maxUses: 50,
     usedCount: 0,
     validFrom: new Date("2025-02-01"),
-    validTo: new Date("2025-12-31"),
+    validTo: new Date("2027-12-31"),
     eligiblePlanCodes: ["BASIC_MONTHLY_M", "BASIC_MONTHLY_L", "BASIC_MONTHLY_XL"],
     companyId: null, // Global coupon
     createdBy: null, // Will be updated dynamically in seed script
@@ -42,7 +42,7 @@ const couponData = [
     maxUses: 0, // Unlimited use
     usedCount: 0,
     validFrom: new Date("2025-01-01"),
-    validTo: new Date("2025-12-31"),
+    validTo: new Date("2027-12-31"),
     eligiblePlanCodes: ["BASIC_MONTHLY_XL", "BASIC_MONTHLY_XXL"],
     companyId: null, // Global coupon
     createdBy: null, // Will be updated dynamically in seed script
@@ -72,7 +72,7 @@ const couponData = [
     maxUses: 200,
     usedCount: 0,
     validFrom: new Date("2025-01-01"),
-    validTo: new Date("2025-12-30"),
+    validTo: new Date("2027-12-30"),
     eligiblePlanCodes: ["BASIC_YEARLY_XXXL"], // Only valid for TRIAL_XS
     companyId: null, // Global coupon
     createdBy: null, // Will be updated dynamically in seed script

@@ -4,34 +4,6 @@ const { sendSuccess, sendError } = require("../../utils/response");
 const { enqueueJob } = require("../libs/jobQueue");
 const { COMPANY_ERRORS } = require("../constants/saas.constant");
 
-// const signup = async (req, res) => {
-//   try {
-//     const payload = req.body;
-//     const createdBy = req.user?._id;
-//     const company = await CompanyService.signupCompany(payload, createdBy);
-
-//     // Audit event handled inside service
-//     return sendSuccess(res, company, "Company created successfully");
-//   } catch (err) {
-//     console.error("Error in signup:", err);
-//     return sendError(res, 500, err.message || COMPANY_ERRORS.INTERNAL_SERVER_ERROR);
-//   }
-// };
-// // controller/company.controller.js
-// const updateSignup = async (req, res) => {
-//   try {
-//     const payload = req.body;
-//     const updatedBy = req.user?._id;
-
-//     const result = await CompanyService.updateSignupCompany(payload, updatedBy);
-
-//     return sendSuccess(res, result, "Company plan updated successfully");
-//   } catch (err) {
-//     console.error("Error in updateSignup:", err);
-//     return sendError(res, 500, err.message || "Internal Server Error");
-//   }
-// };
-
 const signup = async (req, res) => {
   try {
     const payload = req.body;
@@ -164,6 +136,31 @@ const getCompanyDetails = async (req, res) => {
   }
 };
 
+const getTransactions = async (req, res) => {
+  try {
+    const companyId = req.params.companyId;
+    const limit = Number(req.query.limit) || 50;
+    const page = Number(req.query.page) || 1;
+    const skip = (page - 1) * limit;
+
+    // Fetch transactions for company
+    const transactions = await CompanyService.getCompanyTransactions(companyId, limit, skip);
+    const totalCount = await CompanyService.getCompanyTransactionsCount(companyId);
+
+    return sendSuccess(
+      res,
+      {
+        transactions,
+        pagination: { page, limit, total: totalCount, pages: Math.ceil(totalCount / limit) }
+      },
+      "Transactions fetched successfully"
+    );
+  } catch (err) {
+    console.error("Error fetching transactions:", err);
+    return sendError(res, 500, err.message || "Internal server error");
+  }
+};
+
 module.exports = {
   signup,
   get,
@@ -171,5 +168,6 @@ module.exports = {
   list,
   suspend,
   draft,
-  getCompanyDetails
+  getCompanyDetails,
+  getTransactions
 };

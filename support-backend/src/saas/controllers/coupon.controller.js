@@ -7,9 +7,12 @@ exports.create = async (req, res) => {
 };
 
 exports.getAll = async (req, res) => {
-  const userCompanyId = req.params?.companyId;  // Assuming `companyId` is stored in the user object
+  const userCompanyId = req.params?.companyId;
+  const planCode = req.query?.planCode; // Get planCode from query parameters
+  
   try {
-    const data = await CouponService.getAll(req.query, userCompanyId);
+    console.log("CouponController.getAll - planCode:", planCode);
+    const data = await CouponService.getAll(req.query, planCode);
     return sendSuccess(res, data, "Coupons fetched successfully");
   } catch (error) {
     console.error("Error fetching coupons:", error);

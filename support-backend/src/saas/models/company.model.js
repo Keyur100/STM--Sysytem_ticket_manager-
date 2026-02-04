@@ -4,59 +4,60 @@ const { Schema } = mongoose;
 
 const CompanySchema = new Schema(
   {
-    name: { type: String, required: true, index: true },
+    // name: { type: String, required: true, index: true },
+    name: { type: String },//TODO
     url: { type: String, index: true, sparse: true },
     panNo: { type: String, index: true, sparse: true },
-    gstNo: { type: String, index: true, sparse: true },
-    bankAccount: { accountNumber: String, ifsc: String, bankName: String },
+    gstNumber: { type: String, index: true, sparse: true },
     contact: {
       personName: String,
-      email: { type: String, lowercase: true, index: true, sparse: true },
+      email: { type: String, lowercase: true, index: true, sparse: true },//TODO
       phone: String,
       address: String,
     },
-    tenantType: { type: String, enum: ["OWN", "RESELLER"], default: "OWN" },
-    resellerId: { type: Schema.Types.ObjectId, ref: "Company", sparse: true },
-
-    plan: { type: Schema.Types.Mixed },
-    subscription: {
+    activeSubscriptionId: {
+      //UPDATED
       type: Schema.Types.ObjectId,
       ref: "Subscription",
       index: true,
     },
-
-    usage: {
-      employees: { type: Number, default: 0 },
-      customers: { type: Number, default: 0 },
-      suppliers: { type: Number, default: 0 },
-      branches: { type: Number, default: 0 },
-      reseller: { type: Number, default: 0 },
-      storageUsedMB: { type: Number, default: 0 },
-    },
-
-    billingType: {
-      type: String,
-      enum: ["PREPAID", "POSTPAID"],
-      default: "PREPAID",
-    }, // prepaid means automatically deduct from wallet/credit -post paid means order will create but u need to pay
+    subscriptionHistory: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: "Subscription",
+      },
+    ],
+    usage: Schema.Types.Mixed,//UPDATED
+    
     status: {
       type: String,
-      enum: ["ACTIVE", "INACTIVE", "SUSPENDED","DRAFT"],
-      default: "ACTIVE",
+      enum: ["draft", "active", "expired", "over_limit", "suspended"],
+      default: "draft",
     },
-    statusReason: { type: String },
-
-    appliedAddons: [{ type: Schema.Types.Mixed }],
-    pendingAddons: [{ type: Schema.Types.Mixed }],
-    transactions: [{ type: Schema.Types.Mixed }],
-    audit: [{ type: Schema.Types.Mixed }],
-
-    wishlist: [{ type: Schema.Types.ObjectId, ref: "Wishlist" }],
-
     isActive: { type: Boolean, default: true, index: true },
     isDeleted: { type: Boolean, default: false, index: true },
     createdBy: { type: Schema.Types.ObjectId, ref: "UserAuth" },
     updatedBy: { type: Schema.Types.ObjectId, ref: "UserAuth" },
+    // tenantType: { type: String, enum: ["OWN", "RESELLER"], default: "OWN" },
+    // resellerId: { type: Schema.Types.ObjectId, ref: "Company", sparse: true },
+    // plan: { type: Schema.Types.Mixed },//NOT NEEDED
+
+    // billingType: {//NOT NEEDED
+    //   type: String,
+    //   enum: ["PREPAID", "POSTPAID"],
+    //   default: "PREPAID",
+    // }, // prepaid means automatically deduct from wallet/credit -post paid means order will create but u need to pay
+    // statusReason: { type: String },//NOT NEEDED
+
+    // appliedAddons: [{ type: Schema.Types.Mixed }],NOT NEEDED
+    // pendingAddons: [{ type: Schema.Types.Mixed }],NOT NEEDED
+    // Transactions stored in separate Transaction model with $lookup
+    // audit: [{ type: Schema.Types.Mixed }],NOT NEEDED
+
+    // wishlist: [{ type: Schema.Types.ObjectId, ref: "Wishlist" }], NOT NEEDED
+
+    // EXTRA V1
+    logo: String,
   },
   { timestamps: true }
 );

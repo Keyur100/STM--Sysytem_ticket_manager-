@@ -13,6 +13,12 @@ import {
   CircularProgress,
   Alert,
   Checkbox,
+  useTheme,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Snackbar,
 } from "@mui/material";
 import { useDispatch } from "react-redux";
 import api from "../../../../api/axios";
@@ -20,8 +26,9 @@ import Loader from "../../../../components/common/Loader";
 import CouponModal from "./CouponModal";
 import { signupCompany, updateCompany } from "../../../../store/slices/saas/companySlice";
 
-export default function CompanyPaymentStep({ form, onUpdate, onSignedUp }) {
+export default function CompanyPaymentStep({ form, onUpdate, onSignedUp, onPaymentReady }) {
   const dispatch = useDispatch();
+  const theme = useTheme();
   const [walletBalance, setWalletBalance] = useState(0);
   const [couponCode, setCouponCode] = useState("");
   const [discountAmount, setDiscountAmount] = useState(0);
@@ -30,17 +37,80 @@ export default function CompanyPaymentStep({ form, onUpdate, onSignedUp }) {
   const [loading, setLoading] = useState(false);
   const [alertMsg, setAlertMsg] = useState(null);
   const [couponModalOpen, setCouponModalOpen] = useState(false);
+  const [addonsData, setAddonsData] = useState([]);
+  const [walletDialogOpen, setWalletDialogOpen] = useState(false);
+  const [walletDialogMode, setWalletDialogMode] = useState("add");
+  const [walletAmount, setWalletAmount] = useState("");
+  const [snackbar, setSnackbar] = useState({ open: false, message: "", severity: "success" });
 
   const plan = form.plan;
+
+  // Fetch add-ons to calculate totals
+  useEffect(() => {
+    const fetchAddons = async () => {
+      try {
+        const res = await api.get("/saas/addons");
+        const responseData = res.data;
+        const addonList = responseData || [];
+        setAddonsData(Array.isArray(addonList) ? addonList : []);
+      } catch (err) {
+        console.error("Error fetching addons:", err);
+      }
+    };
+    fetchAddons();
+  }, []);
+
+  // Convert selectedAddons from { value: qty } to [{ addonId, qty }]
+  const buildAddonsArray = () => {
+    if (!form.selectedAddons || typeof form.selectedAddons !== "object") {
+      return [];
+    }
+    
+    const addonsArray = [];
+    Object.keys(form.selectedAddons).forEach((addonValue) => {
+      const addon = addonsData.find(a => a.value === addonValue);
+      if (addon) {
+        addonsArray.push({
+          addonId: addon._id,
+          qty: form.selectedAddons[addonValue]
+        });
+      } else {
+        console.warn(`⚠️ Addon not found in addonsData - value: "${addonValue}", available addons:`, addonsData.map(a => ({ value: a.value, _id: a._id })));
+      }
+    });
+    
+    console.log("✅ Built addons array:", addonsArray);
+    return addonsArray;
+  };
+
+  // Calculate total add-ons price based on selected quantities
+  const calculateAddonsTotal = () => {
+    if (!form.selectedAddons || typeof form.selectedAddons !== "object") {
+      return 0;
+    }
+    
+    let total = 0;
+    
+    Object.keys(form.selectedAddons).forEach((addonValue) => {
+      const addon = addonsData.find(a => a.value === addonValue);
+      if (addon) {
+        const qty = form.selectedAddons[addonValue];
+        const price = (addon.pricePaise || 0) / 100;
+        total += price * qty;
+      }
+    });
+    
+    return total;
+  };
 
   // ✅ Fetch wallet balance
   const fetchWallet = useCallback(async () => {
     if (!form._id) return;
     try {
       const res = await api.get(`/saas/wallet/${form._id}`);
-      setWalletBalance((res.wallet.balance || 0) / 100);
+      setWalletBalance((res.wallet.balancePaise || 0) / 100);
     } catch (err) {
-      console.error("Wallet fetch failed:", err);
+      console.error("Error fetching wallet balance:", err);
     }
   }, [form._id]);
 
@@ -54,17 +124,17 @@ export default function CompanyPaymentStep({ form, onUpdate, onSignedUp }) {
     if (!appliedCode || !plan) return;
     try {
       setLoading(true);
+      const totalAmountPaise = (planPrice + addonsTotal) * 100;
       const res = await api.post("/saas/coupons/apply", {
         code: appliedCode,
         planCode: plan.code,
-        amountPaise: plan.pricePaise || 0,
+        amountPaise: totalAmountPaise,
       });
       const discountPaise = res.data.discountPaise || 0;
       setDiscountAmount(discountPaise / 100);
       setCouponCode(appliedCode);
       setAlertMsg({ type: "success", text: `Coupon "${appliedCode}" applied successfully` });
     } catch (err) {
-      console.error("Apply coupon failed:", err);
       setAlertMsg({
         type: "error",
         text: err.response?.data?.message || "Invalid or expired coupon",
@@ -75,86 +145,96 @@ export default function CompanyPaymentStep({ form, onUpdate, onSignedUp }) {
   };
 
   const planPrice = (plan?.pricePaise || 0) / 100;
-  const totalAfterDiscount = Math.max(planPrice - discountAmount, 0);
-  const walletAppliedAmount = useWallet ? Math.min(walletBalance, totalAfterDiscount) : 0;
-  const finalPayable = totalAfterDiscount - walletAppliedAmount;
+  const addonsTotal = calculateAddonsTotal();
+  const subtotal = planPrice + addonsTotal;
+  const totalAfterDiscount = Math.max(subtotal - discountAmount, 0);
+  
+  // ✅ Tax calculation (18% GST if plan.hasTax = true)
+  const taxPercentage = plan?.hasTax ? 18 : 0;
+  const taxableAmount = totalAfterDiscount;
+  const taxAmount = taxPercentage > 0 ? (taxableAmount * taxPercentage) / 100 : 0;
+  
+  const totalWithTax = totalAfterDiscount + taxAmount;
+  const walletAppliedAmount = useWallet ? Math.min(walletBalance, totalWithTax) : 0;
+  const finalPayable = totalWithTax - walletAppliedAmount;
+
+  // Get addon details for display
+  const getAddonDetailsForDisplay = () => {
+    if (!form.selectedAddons || typeof form.selectedAddons !== "object") {
+      return [];
+    }
+    
+    const details = [];
+    Object.keys(form.selectedAddons).forEach((addonValue) => {
+      const addon = addonsData.find(a => a.value === addonValue);
+      if (addon) {
+        const qty = form.selectedAddons[addonValue];
+        const price = (addon.pricePaise || 0) / 100;
+        details.push({
+          name: addon.name,
+          value: addon.value,
+          qty,
+          price,
+          lineTotal: price * qty
+        });
+      }
+    });
+    return details;
+  };
+
+  // ✅ Notify stepper when payment data is ready (AFTER calculations)
+  useEffect(() => {
+    if (onPaymentReady) {
+      onPaymentReady({
+        couponCode,
+        useWallet,
+        walletAppliedAmount,
+        discountAmount,
+        addonsArray: buildAddonsArray(),
+      });
+    }
+  }, [couponCode, useWallet, walletAppliedAmount, discountAmount, form.selectedAddons, addonsData, onPaymentReady]);
 
   // ✅ Auto-switch wallet logic
   useEffect(() => {
-    if (useWallet && walletBalance >= totalAfterDiscount) {
+    if (useWallet && walletBalance >= totalWithTax) {
       setPaymentMethod("WALLET_ONLY");
-    } else if (paymentMethod === "WALLET_ONLY" && walletBalance < totalAfterDiscount) {
+    } else if (paymentMethod === "WALLET_ONLY" && walletBalance < totalWithTax) {
       setPaymentMethod("RAZORPAY");
     }
-  }, [walletBalance, totalAfterDiscount, useWallet]);
+  }, [walletBalance, totalWithTax, useWallet]);
 
-  // ✅ Confirm and Pay
-  const handleConfirmAndPay = async () => {
-    if (!form._id) {
-      setAlertMsg({ type: "error", text: "Company draft missing. Please go back and create draft." });
+  // ✅ Handle Wallet Add/Deduct
+  const handleWalletAction = async () => {
+    if (!walletAmount || isNaN(walletAmount) || Number(walletAmount) <= 0) {
+      setSnackbar({ open: true, message: "Please enter a valid amount", severity: "error" });
       return;
     }
 
     try {
-      setLoading(true);
-      await dispatch(updateCompany({ id: form._id, data: { plan: form.plan } }));
+      const amountInPaise = Number(walletAmount) * 100;
+      const endpoint = walletDialogMode === "add" 
+        ? `/saas/wallet/topup/${form._id}` 
+        : `/saas/wallet/deduct/${form._id}`;
 
-      const payload = {
-        companyId: form._id,
-        plan: form.plan,
-        couponCode: couponCode || null,
-        useWallet,
-        walletAmountPaise: walletAppliedAmount * 100,
-        paymentMethod: paymentMethod === "WALLET_ONLY" ? "WALLET" : paymentMethod,
-      };
+      await api.post(endpoint, { amountPaise: amountInPaise });
+      
+      setSnackbar({ 
+        open: true, 
+        message: `Balance ${walletDialogMode === "add" ? "added" : "deducted"} successfully!`, 
+        severity: "success" 
+      });
 
-      const action = await dispatch(signupCompany(payload));
-      const res = action.payload;
-
-      if (paymentMethod === "WALLET_ONLY" || finalPayable <= 0) {
-        onSignedUp?.();
-        return;
-      }
-
-      if (res?.rzpOrder) {
-        const { rzpOrder, order, razorpayKey } = res;
-        const options = {
-          key: razorpayKey || process.env.REACT_APP_RAZORPAY_KEY,
-          amount: rzpOrder.amount,
-          currency: "INR",
-          name: "SaaS Billing",
-          description: `${plan.name}`,
-          order_id: rzpOrder.id,
-          handler: async function (response) {
-            try {
-              await api.post("/saas/payment/verify", {
-                razorpay_payment_id: response.razorpay_payment_id,
-                razorpay_order_id: response.razorpay_order_id,
-                razorpay_signature: response.razorpay_signature,
-                orderId: order._id,
-              });
-              onSignedUp?.();
-            } catch (err) {
-              setAlertMsg({ type: "error", text: "Payment verification failed" });
-            }
-          },
-          prefill: {
-            name: form.contact?.personName,
-            email: form.contact?.email,
-            contact: form.contact?.phone,
-          },
-          theme: { color: "#1976d2" },
-        };
-        const rzp = new window.Razorpay(options);
-        rzp.open();
-      } else if (res?.payment?.status === "SUCCESS") {
-        onSignedUp?.();
-      }
+      // Refresh wallet balance
+      fetchWallet();
+      setWalletDialogOpen(false);
+      setWalletAmount("");
     } catch (err) {
-      console.error("Payment failed", err);
-      setAlertMsg({ type: "error", text: err?.message || "Payment failed" });
-    } finally {
-      setLoading(false);
+      setSnackbar({ 
+        open: true, 
+        message: err.response?.data?.message || "Action failed", 
+        severity: "error" 
+      });
     }
   };
 
@@ -253,35 +333,188 @@ export default function CompanyPaymentStep({ form, onUpdate, onSignedUp }) {
   onClose={() => setCouponModalOpen(false)}
   onSelect={(coupon) => handleApplyCoupon(coupon.code)}
   companyId={form._id}
+  planCode={form.plan?.code}
 />
 
 
         <Divider sx={{ my: 2 }} />
 
         {/* ✅ Summary */}
-        <Typography>Plan Price: ₹{planPrice.toFixed(2)}</Typography>
-        {discountAmount > 0 && (
-          <Typography color="success.main">Discount: -₹{discountAmount.toFixed(2)}</Typography>
-        )}
-        {useWallet && (
-          <Typography color="info.main">Wallet Used: -₹{walletAppliedAmount.toFixed(2)}</Typography>
-        )}
-        <Typography sx={{ mt: 1 }}>
-          <strong>Final Payable: ₹{finalPayable.toFixed(2)}</strong>
-        </Typography>
+        <Box sx={{ mb: 3, p: 2, backgroundColor: "action.hover", borderRadius: 2 }}>
+          <Typography variant="h6" fontWeight={600} mb={2}>📊 Price Breakdown</Typography>
+          
+          {/* Plan Price */}
+          <Box sx={{ display: "flex", justifyContent: "space-between", mb: 1.5 }}>
+            <Typography>Plan: <strong>{plan.name}</strong></Typography>
+            <Typography fontWeight={600}>₹{planPrice.toFixed(2)}</Typography>
+          </Box>
 
-        {/* ✅ Wallet */}
-        <Box mt={2}>
-          <FormControlLabel
-            control={
-              <Checkbox checked={useWallet} onChange={(e) => setUseWallet(e.target.checked)} />
-            }
-            label={`Use Wallet (Balance ₹${walletBalance.toFixed(2)})`}
-          />
+          {/* Add-ons Detailed Breakdown */}
+          {getAddonDetailsForDisplay().length > 0 && (
+            <>
+              <Divider sx={{ my: 1.5 }} />
+              <Typography variant="body2" fontWeight={600} sx={{ mb: 1, color: "primary.main" }}>
+                📦 Add-ons:
+              </Typography>
+              <Box sx={{ ml: 2, mb: 1.5 }}>
+                {getAddonDetailsForDisplay().map((addonDetail, idx) => (
+                  <Box key={idx} sx={{ display: "flex", justifyContent: "space-between", mb: 0.8, opacity: 0.9 }}>
+                    <Typography variant="body2">
+                      {addonDetail.name} <span style={{ color: theme.palette.text.secondary }}>× {addonDetail.qty}</span>
+                    </Typography>
+                    <Typography variant="body2" fontWeight={500}>
+                      ₹{addonDetail.lineTotal.toFixed(2)}
+                    </Typography>
+                  </Box>
+                ))}
+              </Box>
+            </>
+          )}
+
+          {getAddonDetailsForDisplay().length === 0 && (
+            <Box sx={{ display: "flex", justifyContent: "space-between", mb: 1.5, opacity: 0.6 }}>
+              <Typography>Add-ons:</Typography>
+              <Typography fontWeight={600}>₹0.00</Typography>
+            </Box>
+          )}
+
+          <Divider sx={{ my: 1.5 }} />
+
+          {/* Subtotal */}
+          <Box sx={{ display: "flex", justifyContent: "space-between", mb: 1.5 }}>
+            <Typography fontWeight={600}>Subtotal:</Typography>
+            <Typography fontWeight={700} sx={{ fontSize: "1.05rem" }}>₹{subtotal.toFixed(2)}</Typography>
+          </Box>
+
+          {/* Discount */}
+          {discountAmount > 0 && (
+            <Box sx={{ display: "flex", justifyContent: "space-between", mb: 1.5, color: "success.main" }}>
+              <Typography>💚 Discount:</Typography>
+              <Typography fontWeight={600} color="success.main">-₹{discountAmount.toFixed(2)}</Typography>
+            </Box>
+          )}
+
+          {/* Amount after discount */}
+          <Box sx={{ display: "flex", justifyContent: "space-between", mb: 1.5 }}>
+            <Typography fontWeight={600}>After Discount:</Typography>
+            <Typography fontWeight={600}>₹{totalAfterDiscount.toFixed(2)}</Typography>
+          </Box>
+
+          {/* Tax Calculation */}
+          {plan?.hasTax && (
+            <Box sx={{ display: "flex", justifyContent: "space-between", mb: 1.5, backgroundColor: "action.selected", p: 1, borderRadius: 1 }}>
+              <Typography fontWeight={500}>🧾 {plan?.taxName || "GST"} (18%):</Typography>
+              <Typography fontWeight={600} color="warning.main">
+                +₹{taxAmount.toFixed(2)}
+              </Typography>
+            </Box>
+          )}
+
+          <Divider sx={{ my: 1.5 }} />
+
+          {/* Final Payable */}
+          <Box sx={{ 
+            display: "flex", 
+            justifyContent: "space-between", 
+            p: 1.5, 
+            backgroundColor: theme.palette.mode === "dark" ? "primary.dark" : "primary.light",
+            borderRadius: 1.5,
+            border: `1px solid ${theme.palette.primary.main}`
+          }}>
+            <Typography sx={{ fontSize: "1.1rem", fontWeight: 700, color: theme.palette.mode === "dark" ? "primary.light" : "primary.main" }}>💳 Final Payable:</Typography>
+            <Typography sx={{ fontSize: "1.2rem", fontWeight: 700, color: theme.palette.mode === "dark" ? "primary.light" : "primary.main" }}>₹{finalPayable.toFixed(2)}</Typography>
+          </Box>
+
+          {/* Wallet Applied */}
+          {useWallet && walletAppliedAmount > 0 && (
+            <Box sx={{ display: "flex", justifyContent: "space-between", mt: 1.5, color: "info.main" }}>
+              <Typography>Wallet Used:</Typography>
+              <Typography fontWeight={600} color="info.main">-₹{walletAppliedAmount.toFixed(2)}</Typography>
+            </Box>
+          )}
         </Box>
 
+        {/* ✅ Wallet */}
+        <Box mt={3}>
+          <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 2 }}>
+            <FormControlLabel
+              control={
+                <Checkbox 
+                  checked={useWallet} 
+                  onChange={(e) => setUseWallet(e.target.checked)}
+                  disabled={walletBalance <= 0}
+                />
+              }
+              label={`Use Wallet (Balance ₹${walletBalance.toFixed(2)}) ${walletBalance <= 0 ? '- Disabled' : ''}`}
+              sx={{ opacity: walletBalance <= 0 ? 0.6 : 1 }}
+            />
+            <Box sx={{ display: "flex", gap: 1 }}>
+              <Button
+                variant="outlined"
+                size="small"
+                sx={{
+                  background: "linear-gradient(90deg, #4caf50, #81c784)",
+                  color: "#fff",
+                  border: "none",
+                  "&:hover": { background: "linear-gradient(90deg, #388e3c, #66bb6a)" },
+                }}
+                onClick={() => { setWalletDialogMode("add"); setWalletDialogOpen(true); }}
+              >
+                ➕ Add
+              </Button>
+              <Button
+                variant="outlined"
+                size="small"
+                sx={{
+                  background: "linear-gradient(90deg, #f44336, #e57373)",
+                  color: "#fff",
+                  border: "none",
+                  "&:hover": { background: "linear-gradient(90deg, #d32f2f, #ef5350)" },
+                }}
+                onClick={() => { setWalletDialogMode("deduct"); setWalletDialogOpen(true); }}
+              >
+                ➖ Deduct
+              </Button>
+            </Box>
+          </Box>
+        </Box>
+
+        {/* ✅ Wallet Dialog */}
+        <Dialog open={walletDialogOpen} onClose={() => setWalletDialogOpen(false)} maxWidth="sm" fullWidth>
+          <DialogTitle sx={{ fontWeight: "bold", textAlign: "center" }}>
+            {walletDialogMode === "add" ? "Add Balance" : "Deduct Balance"}
+          </DialogTitle>
+          <DialogContent>
+            <TextField
+              label="Amount (₹)"
+              fullWidth
+              margin="dense"
+              type="number"
+              value={walletAmount}
+              onChange={(e) => setWalletAmount(e.target.value)}
+              sx={{ mt: 1 }}
+            />
+          </DialogContent>
+          <DialogActions sx={{ justifyContent: "space-between", px: 3, pb: 2 }}>
+            <Button onClick={() => { setWalletDialogOpen(false); setWalletAmount(""); }}>
+              Cancel
+            </Button>
+            <Button 
+              variant="contained" 
+              onClick={handleWalletAction}
+              sx={{
+                background: walletDialogMode === "add" 
+                  ? "linear-gradient(90deg, #4caf50, #81c784)" 
+                  : "linear-gradient(90deg, #f44336, #e57373)",
+              }}
+            >
+              {walletDialogMode === "add" ? "Add" : "Deduct"}
+            </Button>
+          </DialogActions>
+        </Dialog>
+
         {/* ✅ Payment Method */}
-        {finalPayable > 0 && (
+        {/* {finalPayable > 0 && (
           <>
             <Divider sx={{ my: 2 }} />
             <Typography variant="h6">Payment Method</Typography>
@@ -294,26 +527,22 @@ export default function CompanyPaymentStep({ form, onUpdate, onSignedUp }) {
               <FormControlLabel value="OFFLINE" control={<Radio />} label="Offline / Manual" />
             </RadioGroup>
           </>
-        )}
+        )} */}
 
-        {/* ✅ Confirm & Pay */}
-        <Box mt={3}>
-          <Button
-            variant="contained"
-            color="primary"
-            fullWidth
-            onClick={handleConfirmAndPay}
-            disabled={loading}
-          >
-            {loading ? <CircularProgress size={20} color="inherit" /> : "Confirm & Pay"}
-          </Button>
-        </Box>
+        {/* ✅ Confirm & Pay button moved to Stepper */}
+        {/* Payment is now handled in the Stepper component */}
 
-        {alertMsg && (
-          <Alert severity={alertMsg.type} sx={{ mt: 2 }}>
-            {alertMsg.text}
+        {/* ✅ Snackbar for Wallet Actions */}
+        <Snackbar
+          open={snackbar.open}
+          autoHideDuration={3000}
+          onClose={() => setSnackbar({ ...snackbar, open: false })}
+          anchorOrigin={{ vertical: "top", horizontal: "right" }}
+        >
+          <Alert severity={snackbar.severity} sx={{ width: "100%" }}>
+            {snackbar.message}
           </Alert>
-        )}
+        </Snackbar>
       </CardContent>
     </Card>
   );

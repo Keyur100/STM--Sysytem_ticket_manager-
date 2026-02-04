@@ -17,23 +17,27 @@ import {
 import SearchIcon from "@mui/icons-material/Search";
 import api from "../../../../api/axios";
 
-const CouponModal = ({ open, onClose, onSelect, companyId }) => {
+const CouponModal = ({ open, onClose, onSelect, companyId, planCode }) => {
   const [coupons, setCoupons] = useState([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (open) fetchCoupons();
-  }, [open]);
+  }, [open, planCode]);
 
   const fetchCoupons = async () => {
     try {
       setLoading(true);
-      const res = await api.get(`/saas/coupons/get-perticular/${companyId}`);
+      console.log("Fetching coupons with planCode:", planCode);
+      // Pass planCode as query parameter
+      const queryParam = planCode ? `?planCode=${planCode}` : "";
+      const res = await api.get(`/saas/coupons/get-perticular/${companyId}${queryParam}`);
       const allCoupons = [
         ...(res.data?.globalCoupons || []),
         ...(res.data?.companyCoupons || []),
       ];
+      console.log("Fetched coupons:", allCoupons);
       setCoupons(allCoupons);
     } catch (error) {
       console.error("Error fetching coupons:", error);
@@ -135,9 +139,9 @@ const CouponModal = ({ open, onClose, onSelect, companyId }) => {
 
                     <Box>
                       <Typography variant="body2" color="success.main">
-                        {coupon.type === "PERCENT"
-                          ? `${coupon.value}% off`
-                          : `₹${(coupon.value / 100).toFixed(2)} off`}
+                        {coupon.discountType === "PERCENT"
+                          ? `${coupon.discountValue}% off`
+                          : `₹${(coupon.discountValue / 100).toFixed(2)} off`}
                       </Typography>
                       <Typography variant="caption" color="text.secondary">
                         Valid: {new Date(coupon.validFrom).toLocaleDateString()} -{" "}

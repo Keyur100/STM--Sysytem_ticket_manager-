@@ -6,8 +6,8 @@ const env = {
 module.exports = {
   env,
   CouponType: {
-    PERCENT: 'PERCENT',
-    FIXED: 'FIXED'
+    PERCENT: 'percentage',
+    FIXED: 'flat'
   },
   CouponStatus: {
     ACTIVE: 'ACTIVE',

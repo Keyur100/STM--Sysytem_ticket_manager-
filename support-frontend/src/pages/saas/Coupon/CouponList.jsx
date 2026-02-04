@@ -60,7 +60,7 @@ export default function CouponList() {
       <Paper sx={{ p: 2 }}>
         <Box display="flex" justifyContent="space-between">
           <h3>Coupons</h3>
-          {hasPermission("coupon.create") && (
+          {hasPermission("saas.coupon_create") && (
             <Button component={Link} to="/saas/coupons/new">Add new</Button>
           )}
         </Box>
@@ -70,8 +70,8 @@ export default function CouponList() {
           columns={columns}
           onEdit={(r) => nav(`/saas/coupons/${r._id}/edit`)}
           onDelete={handleDelete}
-          editPerm="coupon.update"
-          deletePerm="coupon.delete"
+          editPerm="saas.coupon_update"
+          deletePerm="saas.coupon_delete"
         />
       </Paper>
     </Box>

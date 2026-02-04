@@ -12,14 +12,38 @@ class CouponService {
     return Coupon.create({ ...payload, createdBy: userId });
   }
 
-  static async getAll(q = {}) {
-    const filter = {};
-
-    // Fetch global coupons if companyId is not specified
-    const globalCoupons = await Coupon.find({ companyId: null }).sort({
+  static async getAll(q = {}, planCode = null) {
+    console.log("CouponService.getAll called with planCode:", planCode);
+    
+    // Build filter for plan-specific coupons
+    // If planCode provided, only show coupons that either:
+    // 1. Have no eligiblePlanCodes restriction (global coupons)
+    // 2. Include this planCode in their eligiblePlanCodes array
+    const planFilter = planCode 
+      ? {
+          $or: [
+            { eligiblePlanCodes: { $size: 0 } },           // No restrictions
+            { eligiblePlanCodes: { $in: [planCode] } }     // This plan code is eligible
+          ]
+        }
+      : {};
+    
+    // Fetch global coupons (no company, no plan restriction)
+    const globalCoupons = await Coupon.find({ 
+      companyId: null,
+      ...planFilter
+    }).sort({
       createdAt: -1,
     });
-    const companyCoupons = await Coupon.find(filter).sort({ createdAt: -1 });
+    
+    // Fetch company coupons (specific to companies)
+    const companyCoupons = await Coupon.find({
+      ...planFilter
+    }).sort({ createdAt: -1 });
+
+    console.log("Global coupons found:", globalCoupons.length);
+    console.log("Company coupons found:", companyCoupons.length);
+    console.log("Filtered coupons:", { globalCoupons, companyCoupons });
 
     return { globalCoupons, companyCoupons };
   }
@@ -51,17 +75,17 @@ class CouponService {
   }
 
   static async validateAndApply(code, planCode, amountPaise) {
-    const now = new Date();
+    const now = Date.now();
     const coupon = await Coupon.findOne({
       code: String(code || ""),
-    });
+    }).lean()
     if (!coupon) throw new Error("Invalid coupon");
 
     if (coupon.validFrom && now < coupon.validFrom)
       throw new Error("Coupon not active yet");
     if (coupon.validTo && now > coupon.validTo)
       throw new Error("Coupon expired");
-    if (coupon.maxUses > 0 && coupon.usedCount >= coupon.maxUses) //todo deduct -and reduce reset token time for hack
+    if (coupon.usedCount >= coupon.maxUses) //todo deduct -and reduce reset token time for hack
       throw new Error("Coupon usage limit reached");
     if ((coupon.minSpendPaise || 0) > amountPaise)
       throw new Error("Minimum spend not met");
@@ -74,10 +98,10 @@ class CouponService {
     }
 
     let discountPaise = 0;
-    if (coupon.type === CouponType.PERCENT) {
-      discountPaise = Math.floor((amountPaise * coupon.value) / 100);
+    if (coupon.discountType === CouponType.PERCENT) {
+      discountPaise = Math.floor((amountPaise * coupon.discountValue) / 100);
     } else {
-      discountPaise = Math.floor(coupon.value);
+      discountPaise = Math.floor(coupon.discountValue);
     }
     const finalAmount = Math.max(0, amountPaise - discountPaise);
 

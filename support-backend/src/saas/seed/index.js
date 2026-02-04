@@ -5,12 +5,14 @@ dotenv.config();
 const Plan = require("../models/plan.model");
 const Module = require("../models/module.model");
 const Coupon = require("../models/coupon.model");
+const Addon = require("../models/addon.model");
 const {UserAuth} = require("../../models/user.model");  // Assuming this is the collection for user authentication
 
 // Import seed data
 const plansData = require("./data/plans.data");
 const { allModules } = require("./data/modules.data");
 const couponData = require("./data/coupons.data"); // Import coupon data
+const addonData = require("./data/addon.data"); // Import addon data
 
 // Connect to DB
 async function connectDB() {
@@ -87,6 +89,44 @@ async function seedCoupons(superAdminId) {
   console.log("✅ Coupons seeding done");
 }
 
+// Seed Add-ons
+async function seedAddons(superAdminId) {
+  console.log("🚀 Seeding Add-ons...");
+  
+  try {
+    // Drop old 'code' index if it exists to avoid duplicate key errors
+    const collection = Addon.collection;
+    const indexes = await collection.listIndexes().toArray();
+    const codeIndexExists = indexes.some(idx => idx.name === 'code_1');
+    
+    if (codeIndexExists) {
+      console.log("🔧 Removing old 'code' index...");
+      await collection.dropIndex('code_1');
+    }
+    
+    // Clear old addon data with null code values
+    await Addon.deleteMany({ code: null });
+  } catch (err) {
+    console.log("⚠️ Note: Could not clean up old indexes (this is okay on first run)");
+  }
+
+  // Update the addon data with dynamic superAdminId
+  const addonsWithSuperAdmin = addonData.map(addon => ({
+    ...addon,
+    createdBy: superAdminId,  // Assign the superadmin's ID dynamically
+  }));
+
+  for (const addon of addonsWithSuperAdmin) {
+    await Addon.findOneAndUpdate(
+      { value: addon.value }, // find by unique addon value (e.g., max_employees, storageMB)
+      { $set: addon },
+      { new: true, upsert: true }
+    );
+  }
+
+  console.log("✅ Add-ons seeding done");
+}
+
 // Run Seeder
 (async () => {
   try {
@@ -95,6 +135,7 @@ async function seedCoupons(superAdminId) {
     await seedModules();
     await seedPlans();
     await seedCoupons(superAdminId); // Pass the superadmin ID to the coupon seeding function
+    await seedAddons(superAdminId); // Pass the superadmin ID to the addon seeding function
     console.log("🎉 All seeding completed successfully!");
     process.exit(0);
   } catch (err) {

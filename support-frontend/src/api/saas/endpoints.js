@@ -17,6 +17,11 @@ const endpoints = {
     list: "/saas/subscription",
     get: (id) => `/saas/subscription/${id}`,
   },
+
+  addon: {
+    list: "/saas/addons",
+    get: (id) => `/saas/addons/${id}`,
+  },
 };
 
 export default endpoints;

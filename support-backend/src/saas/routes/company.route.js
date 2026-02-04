@@ -33,6 +33,9 @@ router.get(
 
 router.get("/:companyId/details", authJwt, rbac("company_view"), companyController.getCompanyDetails);
 
+// Get company transactions
+router.get("/:companyId/transactions", authJwt, rbac("company_view"), tryCatch(companyController.getTransactions));
+
 // Update company
 router.put(
   "/:companyId",

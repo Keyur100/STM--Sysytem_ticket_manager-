@@ -1,21 +1,20 @@
 import React, { useEffect, useState } from "react";
-import { Stepper, Step, StepLabel, Box, Button } from "@mui/material";
+import { Stepper, Step, StepLabel, Box, Button, CircularProgress, Alert } from "@mui/material";
 import { useDispatch, useSelector } from "react-redux";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   createDraftCompany,
   updateCompany,
   getCompany,
-  signupCompany,
 } from "../../../../store/slices/saas/companySlice";
+import { signupCompany } from "../../../../store/slices/saas/companySlice";
 
-import CompanyInfoStep from "./CompanyInfoStep";
-import BankDetailsStep from "./BankDetailsStep";
-import ContactInfoStep from "./ContactInfoStep";
+import CompanyContactInfoStep from "./CompanyContactInfoStep";
+import AddonsStep from "./AddonsStep";
 import PlanSettingsStep from "./PlanSettingsStep";
 import CompanyPaymentStep from "./CompanyPaymentStep";
 
-const steps = ["Company Info", "Bank Details", "Contact Info", "Plan Settings", "Payment"];
+const steps = ["Company & Contact Details", "Plan Settings", "Add-ons", "Payment"];
 
 export default function CompanyFormStepper() {
   const dispatch = useDispatch();
@@ -29,13 +28,22 @@ export default function CompanyFormStepper() {
     url: "",
     panNo: "",
     gstNo: "",
-    bankAccount: { accountNumber: "", ifsc: "", bankName: "" },
     contact: { personName: "", email: "", phone: "", address: "" },
     plan: null,
+    selectedAddons: {},
   };
 
   const [activeStep, setActiveStep] = useState(0);
   const [form, setForm] = useState(emptyForm);
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  const [paymentError, setPaymentError] = useState(null);
+  const [paymentData, setPaymentData] = useState({
+    couponCode: null,
+    useWallet: false,
+    walletAppliedAmount: 0,
+    discountAmount: 0,
+    addonsArray: [],
+  });
 
   /** Reset form for new company */
   useEffect(() => {
@@ -59,11 +67,6 @@ export default function CompanyFormStepper() {
       url: companyDetails.url || "",
       panNo: companyDetails.panNo || "",
       gstNo: companyDetails.gstNo || "",
-      bankAccount: {
-        accountNumber: companyDetails.bankAccount?.accountNumber || "",
-        ifsc: companyDetails.bankAccount?.ifsc || "",
-        bankName: companyDetails.bankAccount?.bankName || "",
-      },
       contact: {
         personName: companyDetails.contact?.personName || "",
         email: companyDetails.contact?.email || "",
@@ -71,6 +74,7 @@ export default function CompanyFormStepper() {
         address: companyDetails.contact?.address || "",
       },
       plan: companyDetails.plan || null,
+      selectedAddons: companyDetails.selectedAddons || {},
     });
   }, [id, companyDetails]);
 
@@ -91,7 +95,7 @@ export default function CompanyFormStepper() {
 
   /** Next button */
   const handleNext = async () => {
-    // Step 0: create/update draft
+    // Step 0: Create/update draft with company and contact info
     if (activeStep === 0) {
       if (!form._id) {
         const draftPayload = {
@@ -122,7 +126,7 @@ export default function CompanyFormStepper() {
       return;
     }
 
-    // Steps 1-3: update draft
+    // Steps 1-2: Update draft
     if (activeStep > 0 && activeStep < steps.length - 1) {
       if (form._id) {
         await dispatch(
@@ -133,9 +137,9 @@ export default function CompanyFormStepper() {
               url: form.url,
               panNo: form.panNo,
               gstNo: form.gstNo,
-              bankAccount: form.bankAccount,
               contact: form.contact,
               plan: form.plan,
+              selectedAddons: form.selectedAddons,
             },
           })
         );
@@ -155,19 +159,18 @@ export default function CompanyFormStepper() {
   const renderStepContent = (step) => {
     switch (step) {
       case 0:
-        return <CompanyInfoStep form={form} handleChange={handleChange} />;
+        return <CompanyContactInfoStep form={form} handleChange={handleChange} />;
       case 1:
-        return <BankDetailsStep form={form} handleChange={handleChange} />;
-      case 2:
-        return <ContactInfoStep form={form} handleChange={handleChange} />;
-      case 3:
         return <PlanSettingsStep form={form} handleChange={handleChange} />;
-      case 4:
+      case 2:
+        return <AddonsStep form={form} handleChange={handleChange} />;
+      case 3:
         return (
           <CompanyPaymentStep
             form={form}
             onUpdate={(updatedForm) => setForm((f) => ({ ...f, ...updatedForm }))}
             onSignedUp={() => navigate("/companies")}
+            onPaymentReady={setPaymentData}
           />
         );
       default:
@@ -177,20 +180,61 @@ export default function CompanyFormStepper() {
 
   /** Validate step enablement */
   const validateStep = () => {
-    switch (activeStep) {
-      case 0:
-        return form.name.trim();
-      case 1:
-        return form.bankAccount.accountNumber && form.bankAccount.ifsc && form.bankAccount.bankName;
-      case 2:
-        return form.contact.personName && form.contact.email && form.contact.phone;
-      case 3:
-        return form.plan && Array.isArray(form.plan.modulePermissions) && form.plan.modulePermissions.length > 0;
-      case 4:
-        return true;
-      default:
-        return true;
+    return true;
+  };
+
+  /** Handle Payment */
+  const handlePayment = async () => {
+    if (!form._id) {
+      setPaymentError("Company draft missing. Please go back and create draft.");
+      return;
     }
+
+    try {
+      setPaymentLoading(true);
+      setPaymentError(null);
+
+      const payload = {
+        companyId: form._id,
+        plan: form.plan,
+        addons: paymentData.addonsArray || [],
+        couponCode: paymentData.couponCode || null,
+        useWallet: paymentData.useWallet || false,
+        walletAmountPaise: (paymentData.walletAppliedAmount || 0) * 100,
+      };
+
+      console.log("📦 Payment Payload:", payload);
+
+      const action = await dispatch(signupCompany(payload));
+      const res = action.payload;
+
+      if (res) {
+        navigate("/companies");
+      }
+    } catch (err) {
+      setPaymentError(err?.message || "Payment failed. Please try again.");
+      console.error("Payment error:", err);
+    } finally {
+      setPaymentLoading(false);
+    }
+  };
+
+  // Build addons array helper
+  const buildAddonsArray = () => {
+    if (!form.selectedAddons || typeof form.selectedAddons !== "object") {
+      return [];
+    }
+    
+    // This is a simplified version - get addon details in the actual implementation
+    const addonsArray = [];
+    Object.keys(form.selectedAddons).forEach((addonValue) => {
+      addonsArray.push({
+        value: addonValue,
+        qty: form.selectedAddons[addonValue]
+      });
+    });
+    
+    return addonsArray;
   };
 
   return (
@@ -205,12 +249,29 @@ export default function CompanyFormStepper() {
 
       <Box mt={3}>{renderStepContent(activeStep)}</Box>
 
+      {paymentError && (
+        <Alert severity="error" sx={{ mt: 2 }}>
+          {paymentError}
+        </Alert>
+      )}
+
       <Box mt={3} display="flex" justifyContent="space-between">
         <Button disabled={activeStep === 0} onClick={handleBack}>
           Back
         </Button>
-        <Button variant="contained" onClick={handleNext} disabled={!validateStep()}>
-          {activeStep === steps.length - 1 ? "Go to Payment" : "Next"}
+        <Button 
+          variant="contained" 
+          onClick={activeStep === steps.length - 1 ? handlePayment : handleNext}
+          disabled={!validateStep() || paymentLoading}
+        >
+          {paymentLoading ? (
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              <CircularProgress size={20} color="inherit" />
+              Processing...
+            </Box>
+          ) : (
+            activeStep === steps.length - 1 ? "Confirm & Pay" : "Next"
+          )}
         </Button>
       </Box>
     </Box>

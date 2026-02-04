@@ -9,13 +9,13 @@ module.exports = {
   DEFAULTS,
   SubscriptionStatus: {
     ACTIVE: 'ACTIVE',
+    EXPIRING_SOON:'EXPIRING_SOON',
+    GRACE: 'GRACE',
     EXPIRED: 'EXPIRED',
-    PENDING: 'PENDING',
-    // PENDING_ACTIVATION: 'PENDING_ACTIVATION',
+    OVER_LIMIT: 'OVER_LIMIT',
+    UPGRADED: 'UPGRADED',
+    SUSPENDED: 'SUSPENDED',
     CANCELLED: 'CANCELLED',
-    // UPGRADED: 'UPGRADED',
-    // TRIAL: 'TRIAL'
-
   },
   BillingCycle: {
     MONTHLY: 'MONTHLY',
