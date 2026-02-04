@@ -27,6 +27,45 @@ router.get(
 );
 
 /**
+ * Get add-ons applied to a company (from orders/subscriptions)
+ */
+router.get(
+  "/company/:companyId",
+  authJwt,
+  rbac("saas.addon_view"),
+  tryCatch(async (req, res) => {
+    const { companyId } = req.params;
+    const Order = require("../models/order.model");
+    const Addon = require("../models/addon.model");
+    
+    try {
+      // Get all orders for company with addon items
+      const orders = await Order.find({ companyId }).lean();
+      const addonIds = new Set();
+      
+      orders.forEach(order => {
+        if (order.items) {
+          order.items.forEach(item => {
+            if (item.type === "addon" && item.itemId) {
+              addonIds.add(item.itemId.toString());
+            }
+          });
+        }
+      });
+      
+      if (addonIds.size === 0) {
+        return res.json({ addons: [], message: "No addons found for this company" });
+      }
+      
+      const addons = await Addon.find({ _id: { $in: Array.from(addonIds) } }).lean();
+      res.json({ addons });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  })
+);
+
+/**
  * Create add-on (admin only)
  */
 router.post(

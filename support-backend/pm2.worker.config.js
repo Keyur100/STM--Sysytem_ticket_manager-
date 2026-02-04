@@ -38,6 +38,43 @@ module.exports = {
       name: "notification-worker",
       script: "src/workers/notificationWorker.js",
       watch: false
+    },
+
+    // SAAS Subscription Workers
+    {
+      name: "subscription-expiry-worker",
+      script: "src/workers/saas/subscriptionExpiryWorker.js",
+      watch: false
+    },
+    {
+      name: "grace-period-worker",
+      script: "src/workers/saas/gracePeriodWorker.js",
+      watch: false
+    },
+    {
+      name: "usage-alert-worker",
+      script: "src/workers/saas/usageAlertWorker.js",
+      watch: false
+    },
+    {
+      name: "plan-expiry-reminder-worker",
+      script: "src/workers/saas/planExpiryReminderWorker.js",
+      watch: false
+    },
+    {
+      name: "addon-expiry-worker",
+      script: "src/workers/saas/addonExpiryWorker.js",
+      watch: false
+    },
+    {
+      name: "subscription-renewal-worker",
+      script: "src/workers/saas/subscriptionRenewalWorker.js",
+      watch: false
+    },
+    {
+      name: "compliance-audit-worker",
+      script: "src/workers/saas/complianceAuditWorker.js",
+      watch: false
     }
   ]
 };

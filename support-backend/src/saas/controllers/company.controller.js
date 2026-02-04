@@ -1,5 +1,6 @@
 // src/saas/controllers/company.controller.js
 const CompanyService = require("../services/company.service");
+const WalletService = require("../services/wallet.service");
 const { sendSuccess, sendError } = require("../../utils/response");
 const { enqueueJob } = require("../libs/jobQueue");
 const { COMPANY_ERRORS } = require("../constants/saas.constant");
@@ -161,6 +162,126 @@ const getTransactions = async (req, res) => {
   }
 };
 
+const recordCashPayment = async (req, res) => {
+  try {
+    const { companyId } = req.params;
+    const { orderId, cashReceiptNo } = req.body;
+    const createdBy = req.user?._id;
+
+    if (!orderId || !cashReceiptNo) {
+      return sendError(res, 400, "orderId and cashReceiptNo are required");
+    }
+
+    const result = await CompanyService.recordCashPayment({
+      companyId,
+      orderId,
+      cashReceiptNo,
+      createdBy,
+    });
+
+    // Background audit job
+    await enqueueJob({
+      type: "audit.log_event",
+      payload: {
+        action: "record_cash_payment",
+        entityType: "Order",
+        entityId: orderId,
+        companyId,
+        createdBy,
+      },
+      priority: 5,
+    });
+
+    return sendSuccess(res, result, "Cash payment recorded successfully");
+  } catch (err) {
+    console.error("Error recording cash payment:", err);
+    return sendError(res, 500, err.message || COMPANY_ERRORS.INTERNAL_SERVER_ERROR);
+  }
+};
+
+const upgradeSubscription = async (req, res) => {
+  try {
+    const { subscriptionId } = req.params;
+    const { newPlanId, couponCode, useWallet } = req.body;
+    const createdBy = req.user?._id;
+
+    if (!subscriptionId || !newPlanId) {
+      return sendError(res, 400, "subscriptionId and newPlanId are required");
+    }
+
+    const result = await CompanyService.upgradeSubscription({
+      subscriptionId,
+      newPlanId,
+      couponCode,
+      useWallet,
+      createdBy,
+    });
+
+    return sendSuccess(res, result, "Subscription upgraded successfully");
+  } catch (err) {
+    console.error("Error upgrading subscription:", err);
+    return sendError(res, 400, err.message || "Failed to upgrade subscription");
+  }
+};
+
+const reactivateSubscription = async (req, res) => {
+  try {
+    const { subscriptionId } = req.params;
+    const { couponCode, useWallet } = req.body;
+    const createdBy = req.user?._id;
+
+    if (!subscriptionId) {
+      return sendError(res, 400, "subscriptionId is required");
+    }
+
+    const result = await CompanyService.reactivateSubscription({
+      subscriptionId,
+      couponCode,
+      useWallet,
+      createdBy,
+    });
+
+    return sendSuccess(res, result, result.message);
+  } catch (err) {
+    console.error("Error reactivating subscription:", err);
+    return sendError(res, 400, err.message || "Failed to reactivate subscription");
+  }
+};
+const getPaymentHistory = async (req, res) => {
+  try {
+    const companyId = req.params.companyId;
+    const { page = 1, limit = 10, sortBy = "createdAt", sortOrder = "desc" } = req.query;
+
+    const result = await CompanyService.getCompanyPaymentHistory(companyId, {
+      page: parseInt(page),
+      limit: parseInt(limit),
+      sortBy,
+      sortOrder
+    });
+
+    return sendSuccess(res, result, "Payment history fetched successfully");
+  } catch (err) {
+    console.error("Error fetching payment history:", err);
+    return sendError(res, 500, err.message || COMPANY_ERRORS.INTERNAL_SERVER_ERROR);
+  }
+};
+
+const getFullDetails = async (req, res) => {
+  try {
+    const companyId = req.params.companyId;
+    const result = await CompanyService.getCompanyFullDetails(companyId);
+
+    if (!result) {
+      return sendError(res, 404, COMPANY_ERRORS.COMPANY_NOT_FOUND);
+    }
+
+    return sendSuccess(res, result, "Company full details fetched successfully");
+  } catch (err) {
+    console.error("Error fetching company full details:", err);
+    return sendError(res, 500, err.message || COMPANY_ERRORS.INTERNAL_SERVER_ERROR);
+  }
+};
+
 module.exports = {
   signup,
   get,
@@ -169,5 +290,10 @@ module.exports = {
   suspend,
   draft,
   getCompanyDetails,
-  getTransactions
+  getTransactions,
+  recordCashPayment,
+  upgradeSubscription,
+  reactivateSubscription,
+  getPaymentHistory,
+  getFullDetails,
 };

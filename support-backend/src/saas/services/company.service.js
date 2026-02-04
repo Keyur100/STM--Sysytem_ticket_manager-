@@ -530,11 +530,11 @@ class CompanyService {
     const pipeline = [
       { $match: match },
 
-      // ✅ Join Subscription to get plan expiry
+      // ✅ Join Subscription to get plan expiry (company stores activeSubscriptionId)
       {
         $lookup: {
           from: "subscriptions",
-          localField: "subscription",
+          localField: "activeSubscriptionId",
           foreignField: "_id",
           as: "subscription",
         },
@@ -546,23 +546,16 @@ class CompanyService {
         },
       },
 
-      // ✅ Join Payment to get last payment details
       {
         $lookup: {
-          from: "payments",
+          from: "orders",
           let: { companyId: "$_id" },
           pipeline: [
-            { $match: { $expr: { $eq: ["$company", "$$companyId"] } } },
-            { $sort: { createdAt: -1 } },
-            { $limit: 1 },
+            { $match: { $expr: { $eq: ["$companyId", "$$companyId"] } } },
+            { $sort: { createdAt: -1 } }
+            // Removed $limit: 1 to get ALL orders
           ],
-          as: "payment",
-        },
-      },
-      {
-        $unwind: {
-          path: "$payment",
-          preserveNullAndEmptyArrays: true,
+          as: "allOrders",
         },
       },
 
@@ -572,18 +565,88 @@ class CompanyService {
           name: 1,
           email: "$contact.email",
           status: 1,
-          "plan.name": "$plan.name",
-          "plan.pricePaise": "$plan.pricePaise",
-          planExpiry: "$subscription.endDate",
-          paymentMethod: "$payment.method",
-          paymentStatus: "$payment.status",
-          paymentAmount: {
+          // Get the latest order for plan details
+          lastOrder: {
             $cond: [
-              { $ifNull: ["$payment.amountPaise", false] },
-              { $divide: ["$payment.amountPaise", 100] },
-              null,
+              { $gt: [{ $size: "$allOrders" }, 0] },
+              { $arrayElemAt: ["$allOrders", 0] },
+              null
+            ]
+          },
+          // Include ALL orders for payment history list
+          allOrders: {
+            $map: {
+              input: "$allOrders",
+              as: "order",
+              in: {
+                _id: "$$order._id",
+                orderNumber: "$$order.orderNumber",
+                totalAmount: { $divide: [{ $ifNull: ["$$order.totals.totalPayablePaise", 0] }, 100] },
+                planName: {
+                  $first: {
+                    $map: {
+                      input: {
+                        $filter: {
+                          input: "$$order.items",
+                          as: "it",
+                          cond: { $eq: ["$$it.type", "plan"] }
+                        }
+                      },
+                      as: "p",
+                      in: "$$p.name"
+                    }
+                  }
+                },
+                status: "$$order.status",
+                payments: "$$order.payments",
+                createdAt: "$$order.createdAt",
+                updatedAt: "$$order.updatedAt"
+              }
+            }
+          },
+          // Pull plan details from subscription snapshot (if any), fallback to latest order's plan item
+          "plan.name": {
+            $ifNull: [
+              "$subscription.planSnapshot.name",
+              {
+                $first: {
+                  $map: {
+                    input: {
+                      $filter: {
+                        input: { $ifNull: [{ $arrayElemAt: ["$allOrders.items", 0] }, []] },
+                        as: "it",
+                        cond: { $eq: ["$$it.type", "plan"] },
+                      },
+                    },
+                    as: "p",
+                    in: "$$p.name",
+                  },
+                },
+              }
             ],
           },
+          "plan.pricePaise": {
+            $ifNull: [
+              "$subscription.planPricePaise",
+              {
+                $first: {
+                  $map: {
+                    input: {
+                      $filter: {
+                        input: { $ifNull: [{ $arrayElemAt: ["$allOrders.items", 0] }, []] },
+                        as: "it",
+                        cond: { $eq: ["$$it.type", "plan"] },
+                      },
+                    },
+                    as: "p",
+                    in: "$$p.priceAtPurchasePaise",
+                  },
+                },
+              }
+            ],
+          },
+          // subscription.endAt contains timestamp (ms)
+          planExpiry: "$subscription.endAt",
           createdAt: 1,
         },
       },
@@ -723,7 +786,7 @@ class CompanyService {
         reference: cashReceiptNo.trim(),
         orderId,
         description: `Cash payment recorded for order ${orderId}`,
-        status: "completed",
+        status: "COMPLETED",
         createdBy,
       });
 
@@ -745,6 +808,678 @@ class CompanyService {
       };
     } catch (err) {
       console.error("Error recording cash payment:", err);
+      throw err;
+    }
+  }
+
+  // ========================= UPGRADE SUBSCRIPTION =========================
+  static async upgradeSubscription({ subscriptionId, newPlanId, couponCode, useWallet, createdBy }) {
+    try {
+      const now = Date.now();
+
+      // Validate subscription
+      const subscription = await subscriptionModel.findById(subscriptionId);
+      if (!subscription) throw new Error("Subscription not found");
+      if (subscription.status !== "ACTIVE") throw new Error("Only ACTIVE subscriptions can be upgraded");
+
+      // Validate plans
+      const oldPlan = await planModel.findById(subscription.planId);
+      const newPlan = await planModel.findById(newPlanId);
+
+      if (!newPlan) throw new Error("New plan not found");
+      if (newPlan.pricePaise <= oldPlan.pricePaise) {
+        throw new Error("Upgrade must be to a higher-priced plan");
+      }
+
+      // Validate company and limits
+      const company = await Company.findById(subscription.companyId);
+      if (!company) throw new Error("Company not found");
+
+      const currentUsage = company.usage || {};
+      const planLimits = newPlan.userPricing || {};
+      const addonLimits = {};
+
+      for (const addon of subscription.addonSnapshot || []) {
+        addonLimits[addon.value] = (addonLimits[addon.value] || 0) + addon.qty;
+      }
+
+      for (const key of Object.keys(currentUsage)) {
+        const allowed = (planLimits[key] || 0) + (addonLimits[key] || 0);
+        if (allowed < currentUsage[key]) {
+          throw new Error(`Upgrade violates ${key} limit (allowed ${allowed}, used ${currentUsage[key]})`);
+        }
+      }
+
+      // Calculate proration
+      const totalDays = Math.max(1, Math.ceil((subscription.endAt - subscription.startAt) / DAY_MS));
+      const remainingDays = Math.max(0, Math.ceil((subscription.endAt - now) / DAY_MS));
+
+      let paidAmount = subscription.planPricePaise || 0;
+      if (subscription.activatedByOrderId) {
+        const order = await orderModel.findById(subscription.activatedByOrderId);
+        if (order?.final?.totalPaidPaise) paidAmount = order.final.totalPaidPaise;
+      }
+
+      const remainingValue = Math.round((paidAmount / totalDays) * remainingDays);
+      const subtotal = newPlan.pricePaise;
+
+      // Handle coupon
+      let discounts = [];
+      if (couponCode) {
+        const coupon = await couponModel.findOne({ code: couponCode, isActive: true });
+
+        if (coupon &&
+          (!coupon.validFrom || now >= coupon.validFrom) &&
+          (!coupon.validTo || now <= coupon.validTo) &&
+          (!coupon.minSpendPaise || subtotal >= coupon.minSpendPaise)
+        ) {
+          let applied = coupon.discountType === "percentage"
+            ? Math.floor((subtotal * coupon.discountValue) / 100)
+            : Number(coupon.discountValue || 0);
+
+          if (coupon.maxDiscountPaise) applied = Math.min(applied, coupon.maxDiscountPaise);
+
+          discounts.push({
+            couponId: coupon._id,
+            couponCode: coupon.code,
+            discountType: coupon.discountType,
+            discountValue: coupon.discountValue,
+            discountAppliedPaise: applied,
+          });
+        }
+      }
+
+      const totalDiscount = discounts.reduce((s, d) => s + d.discountAppliedPaise, 0);
+
+      // Tax calculation
+      const taxableAmount = Math.max(0, subtotal - totalDiscount);
+      const totalTax = newPlan.hasTax ? Math.round(taxableAmount * 0.18) : 0;
+
+      let totalPayable = taxableAmount + totalTax - remainingValue;
+      totalPayable = Math.max(0, totalPayable);
+
+      // Wallet handling
+      let walletApplied = 0;
+      let wallet = null;
+
+      if (useWallet && totalPayable > 0) {
+        wallet = await walletModel.findOne({ companyId: company._id });
+        if (wallet) walletApplied = Math.min(wallet.balancePaise, totalPayable);
+      }
+
+      const amountDue = Math.max(0, totalPayable - walletApplied);
+
+      // Create order
+      const items = [{
+        type: "plan",
+        itemId: newPlan._id,
+        name: newPlan.name,
+        qty: 1,
+        priceAtPurchasePaise: newPlan.pricePaise,
+        lineSubtotalPaise: newPlan.pricePaise,
+        taxConfig: { hasTax: newPlan.hasTax }
+      }];
+
+      const orderStatus = amountDue === 0 ? "paid" : walletApplied > 0 ? "partially_paid" : "pending";
+
+      const order = await orderModel.create({
+        companyId: company._id,
+        orderType: "SUBSCRIPTION_UPGRADE",
+        upgradeFromSubscriptionId: subscriptionId,
+        items,
+        discounts,
+        walletUsed: {
+          walletId: wallet?._id || null,
+          amountPaise: walletApplied,
+        },
+        payments: walletApplied
+          ? [{
+            method: "manual",
+            amountPaise: walletApplied,
+            paidAt: now,
+            status: "success",
+            referenceId: "WALLET",
+          }]
+          : [],
+        taxBreakdown: totalTax
+          ? [{
+            taxName: newPlan.taxName || "GST",
+            percentage: 18,
+            taxAmountPaise: totalTax,
+          }]
+          : [],
+        totals: {
+          subtotalPaise: subtotal,
+          totalDiscountPaise: totalDiscount,
+          taxableAmountPaise: taxableAmount,
+          totalTaxPaise: totalTax,
+          totalPayablePaise: totalPayable,
+        },
+        final: {
+          totalPaidPaise: walletApplied,
+          amountDuePaise: amountDue,
+          refundedAmountPaise: 0,
+        },
+        status: orderStatus,
+        meta: {
+          upgradeFromSubscriptionId: subscriptionId,
+          intendedStartAt: now,
+        },
+        createdBy,
+      });
+
+      // Activate subscription if fully paid
+      let newSubscription = null;
+      if (order.status === "paid") {
+        newSubscription = await activateSubscriptionIfEligible(order);
+      }
+
+      // Deduct wallet
+      if (walletApplied > 0 && wallet) {
+        wallet.balancePaise -= walletApplied;
+        await wallet.save();
+        await transactionModel.create({
+          companyId: company._id,
+          orderId: order._id,
+          type: "WALLET_DEBIT",
+          amountPaise: walletApplied,
+          source: "wallet",
+          description: `Wallet debit for upgrade order ${order._id}`,
+          createdBy,
+        });
+      }
+
+      return {
+        success: true,
+        orderId: order._id,
+        order,
+        newSubscription: newSubscription || null,
+        amountDuePaise: amountDue,
+        remainingValuePaise: remainingValue,
+        message: "Upgrade order created successfully",
+      };
+    } catch (err) {
+      console.error("Error upgrading subscription:", err);
+      throw err;
+    }
+  }
+
+  // ========================= REACTIVATE SUBSCRIPTION =========================
+  static async reactivateSubscription({ subscriptionId, couponCode, useWallet, createdBy }) {
+    try {
+      const now = Date.now();
+
+      const subscription = await subscriptionModel.findById(subscriptionId);
+      if (!subscription) throw new Error("Subscription not found");
+
+      const plan = await planModel.findById(subscription.planId);
+      const company = await Company.findById(subscription.companyId);
+
+      if (!plan || !company) throw new Error("Plan or company not found");
+
+      // Determine reactivation mode
+      let orderType;
+      let subscriptionStartAt;
+
+      if (subscription.status === "ACTIVE" && now < subscription.endAt) {
+        // Renewal for next cycle
+        orderType = "SUBSCRIPTION_RENEWAL";
+        subscriptionStartAt = subscription.endAt + 1;
+      } else if (subscription.status === "EXPIRED") {
+        const graceEnd = subscription.endAt + (7 * DAY_MS);
+
+        if (now <= graceEnd) {
+          // Immediate restore within grace period
+          orderType = "SUBSCRIPTION_REACTIVATE";
+          subscriptionStartAt = now;
+        } else {
+          // Fresh subscription after grace period
+          orderType = "SUBSCRIPTION_PURCHASE";
+          subscriptionStartAt = now;
+        }
+      } else {
+        throw new Error("Invalid subscription state for reactivation");
+      }
+
+      const carriedAddons = subscription.addonSnapshot || [];
+
+      // Build order items
+      const items = [
+        {
+          type: "plan",
+          itemId: plan._id,
+          name: plan.name,
+          qty: 1,
+          priceAtPurchasePaise: plan.pricePaise,
+          lineSubtotalPaise: plan.pricePaise,
+          taxConfig: { hasTax: plan.hasTax }
+        },
+        ...carriedAddons.map(a => ({
+          type: "addon",
+          itemId: a.addonId,
+          name: a.name,
+          value: a.value,
+          qty: a.qty,
+          priceAtPurchasePaise: a.pricePaise,
+          lineSubtotalPaise: a.pricePaise * a.qty,
+          taxConfig: { hasTax: a.hasTax }
+        }))
+      ];
+
+      const subtotal = items.reduce((s, i) => s + i.lineSubtotalPaise, 0);
+
+      // Handle coupon
+      let discounts = [];
+      if (couponCode) {
+        const coupon = await couponModel.findOne({ code: couponCode, isActive: true });
+
+        if (coupon &&
+          (!coupon.validFrom || now >= coupon.validFrom) &&
+          (!coupon.validTo || now <= coupon.validTo) &&
+          (!coupon.minSpendPaise || subtotal >= coupon.minSpendPaise)
+        ) {
+          let applied = coupon.discountType === "percentage"
+            ? Math.floor((subtotal * coupon.discountValue) / 100)
+            : Number(coupon.discountValue || 0);
+
+          if (coupon.maxDiscountPaise) applied = Math.min(applied, coupon.maxDiscountPaise);
+
+          discounts.push({
+            couponId: coupon._id,
+            couponCode: coupon.code,
+            discountType: coupon.discountType,
+            discountValue: coupon.discountValue,
+            discountAppliedPaise: applied
+          });
+        }
+      }
+
+      const totalDiscount = discounts.reduce((s, d) => s + d.discountAppliedPaise, 0);
+
+      // Tax calculation
+      let taxableAmount = 0;
+      for (const item of items) {
+        if (item.taxConfig?.hasTax) {
+          taxableAmount += item.lineSubtotalPaise;
+        }
+      }
+      taxableAmount = Math.max(0, taxableAmount - totalDiscount);
+
+      const totalTax = plan.hasTax ? Math.round(taxableAmount * 0.18) : 0;
+      const totalPayable = subtotal - totalDiscount + totalTax;
+
+      // Wallet handling
+      let walletApplied = 0;
+      let wallet = null;
+
+      if (useWallet === true && totalPayable > 0) {
+        wallet = await walletModel.findOne({ companyId: company._id });
+        if (!wallet) {
+          wallet = await walletModel.create({ companyId: company._id, balancePaise: 0 });
+        }
+        walletApplied = Math.min(wallet.balancePaise, totalPayable);
+      }
+
+      const amountDue = Math.max(0, totalPayable - walletApplied);
+
+      let orderStatus = "pending";
+      if (walletApplied > 0 && amountDue > 0) orderStatus = "partially_paid";
+      if (amountDue === 0) orderStatus = "paid";
+
+      // Create order
+      const order = await orderModel.create({
+        companyId: company._id,
+        orderType,
+        items,
+        discounts,
+        walletUsed: {
+          walletId: wallet?._id || null,
+          amountPaise: walletApplied
+        },
+        payments: walletApplied
+          ? [{
+            method: "manual",
+            amountPaise: walletApplied,
+            status: "success",
+            paidAt: now,
+            referenceId: "WALLET"
+          }]
+          : [],
+        taxBreakdown: plan.hasTax
+          ? [{
+            taxName: plan.taxName || "GST",
+            percentage: 18,
+            taxAmountPaise: totalTax
+          }]
+          : [],
+        totals: {
+          subtotalPaise: subtotal,
+          totalDiscountPaise: totalDiscount,
+          taxableAmountPaise: taxableAmount,
+          totalTaxPaise: totalTax,
+          totalPayablePaise: totalPayable
+        },
+        final: {
+          totalPaidPaise: walletApplied,
+          amountDuePaise: amountDue,
+          refundedAmountPaise: 0
+        },
+        status: orderStatus,
+        meta: {
+          reactivateFromSubscriptionId: subscriptionId,
+          intendedStartAt: subscriptionStartAt
+        },
+        createdBy,
+      });
+
+      // Activate subscription if fully paid
+      let newSubscription = null;
+      if (orderStatus === "paid") {
+        newSubscription = await activateSubscriptionIfEligible(order);
+      }
+
+      // Deduct wallet
+      if (walletApplied > 0) {
+        wallet.balancePaise -= walletApplied;
+        await wallet.save();
+
+        await transactionModel.create({
+          companyId: company._id,
+          orderId: order._id,
+          type: "WALLET_DEBIT",
+          amountPaise: walletApplied,
+          source: "wallet",
+          description: `Wallet debit for ${orderType} order ${order._id}`,
+          createdBy,
+        });
+      }
+
+      return {
+        success: true,
+        message: "Reactivation order created",
+        orderId: order._id,
+        order,
+        newSubscription: newSubscription || null,
+        amountDuePaise: amountDue,
+      };
+    } catch (err) {
+      console.error("Error reactivating subscription:", err);
+      throw err;
+    }
+  }
+
+  // Get all payment history for a company
+  static async getCompanyPaymentHistory(companyId, { page = 1, limit = 10, sortBy = "createdAt", sortOrder = "desc" } = {}) {
+    const skip = (page - 1) * limit;
+    const sortDirection = sortOrder === "desc" ? -1 : 1;
+
+    try {
+      // Get all orders for the company with their payment details
+      const orders = await orderModel.aggregate([
+        { $match: { companyId: new mongoose.Types.ObjectId(companyId) } },
+        {
+          $project: {
+            _id: 1,
+            orderNumber: 1,
+            status: 1,
+            orderType: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            items: 1,
+            totals: 1,
+            payments: 1,
+            "planItem": {
+              $first: {
+                $filter: {
+                  input: "$items",
+                  as: "item",
+                  cond: { $eq: ["$$item.type", "plan"] }
+                }
+              }
+            }
+          }
+        },
+        {
+          $addFields: {
+            totalAmount: { $divide: [{ $ifNull: ["$totals.totalPayablePaise", 0] }, 100] },
+            planName: "$planItem.name",
+            paymentsList: {
+              $map: {
+                input: { $ifNull: ["$payments", []] },
+                as: "payment",
+                in: {
+                  _id: "$$payment._id",
+                  method: "$$payment.method",
+                  status: "$$payment.status",
+                  amountPaise: "$$payment.amountPaise",
+                  amount: { $divide: [{ $ifNull: ["$$payment.amountPaise", 0] }, 100] },
+                  transactionId: "$$payment.transactionId",
+                  createdAt: "$$payment.createdAt",
+                  metadata: "$$payment.metadata"
+                }
+              }
+            }
+          }
+        },
+        {
+          $project: {
+            _id: 1,
+            orderNumber: 1,
+            status: 1,
+            orderType: 1,
+            totalAmount: 1,
+            planName: 1,
+            paymentsList: 1,
+            paymentCount: { $size: { $ifNull: ["$payments", []] } },
+            createdAt: 1,
+            updatedAt: 1
+          }
+        },
+        { $sort: { [sortBy]: sortDirection } },
+        { $skip: skip },
+        { $limit: limit }
+      ]);
+
+      // Get total count
+      const totalCount = await orderModel.countDocuments({ companyId: new mongoose.Types.ObjectId(companyId) });
+
+      return {
+        payments: orders,
+        pagination: {
+          total: totalCount,
+          page,
+          limit,
+          pages: Math.ceil(totalCount / limit)
+        }
+      };
+    } catch (err) {
+      console.error("Error getting company payment history:", err);
+      throw err;
+    }
+  }
+
+  // Get full company details with plan, orders, payments, wallet, and transactions
+  static async getCompanyFullDetails(companyId) {
+    try {
+      const company = await Company.findById(companyId).lean();
+      if (!company) return null;
+
+      // Get wallet
+      const wallet = await walletModel.findOne({ companyId }).lean();
+
+      // Get active subscription with plan details
+      let planData = null;
+      if (company.activeSubscriptionId) {
+        const subscription = await subscriptionModel.findById(company.activeSubscriptionId).lean();
+        if (subscription) {
+          planData = {
+            subscriptionId: subscription._id,
+            planSnapshot: subscription.planSnapshot,
+            planPricePaise: subscription.planPricePaise,
+            status: subscription.status,
+            endAt: subscription.endAt,
+            addonSnapshot: subscription.addonSnapshot,
+          };
+        }
+      }
+
+      // recent orders (latest 5)
+      const recentOrdersRaw = await orderModel.find({ companyId }).sort({ createdAt: -1 }).limit(5).lean();
+
+      // all orders for payment summary
+      const allOrders = await orderModel.find({ companyId }).sort({ createdAt: -1 }).lean();
+
+      const orderSummary = {
+        totalOrders: await orderModel.countDocuments({ companyId }),
+        recentOrders: recentOrdersRaw.map(o => ({
+          _id: o._id,
+          orderNumber: o.orderNumber || null,
+          status: o.status,
+          orderType: o.orderType || null,
+          items: (o.items || []).map(item => ({
+            type: item.type,
+            itemId: item.itemId || null,
+            name: item.name,
+            qty: item.qty || 1,
+            priceAtPurchasePaise: item.priceAtPurchasePaise || 0,
+            lineSubtotalPaise: item.lineSubtotalPaise || 0,
+          })),
+          totals: {
+            subtotalPaise: o.totals?.subtotalPaise || 0,
+            totalDiscountPaise: o.totals?.totalDiscountPaise || 0,
+            taxableAmountPaise: o.totals?.taxableAmountPaise || 0,
+            totalTaxPaise: o.totals?.totalTaxPaise || 0,
+            totalPayablePaise: o.totals?.totalPayablePaise || 0,
+          },
+          discounts: o.discounts || [],
+          walletUsed: o.walletUsed || null,
+          taxBreakdown: o.taxBreakdown || [],
+          payments: (o.payments || []).map(p => ({
+            method: p.method,
+            referenceId: p.referenceId || null,
+            amountPaise: p.amountPaise || 0,
+            amount: (p.amountPaise || 0) / 100,
+            status: p.status,
+            paidAt: p.paidAt || null,
+          })),
+          final: {
+            totalPaidPaise: o.final?.totalPaidPaise || 0,
+            amountDuePaise: o.final?.amountDuePaise || 0,
+            refundedAmountPaise: o.final?.refundedAmountPaise || 0,
+          },
+          createdAt: o.createdAt,
+        })),
+      };
+
+      // Build payment summary and grouped-by-method view
+      let totalPaymentsMade = 0;
+      let totalPendingAcrossOrders = 0;
+      const paymentMethodsDetailed = {};
+
+      const paymentsList = allOrders.map(order => {
+        const orderPayments = (order.payments || []).map(p => ({
+          referenceId: p.referenceId || null,
+          method: p.method || null,
+          amountPaise: p.amountPaise || 0,
+          amount: (p.amountPaise || 0) / 100,
+          status: p.status || null,
+          paidAt: p.paidAt || null,
+          orderId: order._id,
+        }));
+
+        (order.payments || []).forEach(p => {
+          const amt = p.amountPaise || 0;
+          if (p.status === 'success') totalPaymentsMade += amt;
+          const method = p.method || 'unknown';
+          if (!paymentMethodsDetailed[method]) paymentMethodsDetailed[method] = { totalAmountPaise: 0, payments: [] };
+          paymentMethodsDetailed[method].totalAmountPaise += amt;
+          paymentMethodsDetailed[method].payments.push({
+            referenceId: p.referenceId || null,
+            amountPaise: amt,
+            amount: amt / 100,
+            status: p.status || null,
+            paidAt: p.paidAt || null,
+            orderId: order._id,
+          });
+        });
+
+        const pendingForOrder = order.final?.amountDuePaise || 0;
+        totalPendingAcrossOrders += pendingForOrder;
+
+        return {
+          orderId: order._id,
+          orderNumber: order.orderNumber || null,
+          orderType: order.orderType || null,
+          status: order.status || null,
+          totals: {
+            subtotalPaise: order.totals?.subtotalPaise || 0,
+            totalDiscountPaise: order.totals?.totalDiscountPaise || 0,
+            taxableAmountPaise: order.totals?.taxableAmountPaise || 0,
+            totalTaxPaise: order.totals?.totalTaxPaise || 0,
+            totalPayablePaise: order.totals?.totalPayablePaise || 0,
+          },
+          discounts: order.discounts || [],
+          walletUsed: order.walletUsed || null,
+          taxBreakdown: order.taxBreakdown || [],
+          payments: orderPayments,
+          final: {
+            totalPaidPaise: order.final?.totalPaidPaise || 0,
+            refundedAmountPaise: order.final?.refundedAmountPaise || 0,
+            amountDuePaise: pendingForOrder,
+          },
+          createdAt: order.createdAt,
+        };
+      });
+
+      const paymentByMethod = Object.entries(paymentMethodsDetailed).map(([method, info]) => ({
+        method,
+        totalAmountPaise: info.totalAmountPaise,
+        totalAmount: info.totalAmountPaise / 100,
+        payments: info.payments,
+      }));
+
+      const paymentSummary = {
+        totalPaidPaise: totalPaymentsMade,
+        totalPendingPaise: totalPendingAcrossOrders,
+        payments: paymentsList,
+        paymentByMethod,
+      };
+
+      // Get transactions (latest 10)
+      const transactions = await transactionModel.find({ companyId })
+        .sort({ createdAt: -1 })
+        .limit(10)
+        .lean();
+
+      return {
+        company: {
+          _id: company._id,
+          name: company.name,
+          email: company.contact?.email,
+          status: company.status,
+          createdAt: company.createdAt,
+          updatedAt: company.updatedAt,
+        },
+        plan: planData,
+        wallet: wallet ? {
+          balancePaise: wallet.balancePaise,
+          balance: wallet.balancePaise / 100,
+          status: wallet.status,
+        } : null,
+        orderSummary,
+        paymentSummary,
+        transactions: transactions.map(t => ({
+          _id: t._id,
+          type: t.type,
+          amountPaise: t.amountPaise,
+          amount: t.amountPaise / 100,
+          source: t.source,
+          description: t.description,
+          createdAt: t.createdAt,
+        })),
+      };
+    } catch (err) {
+      console.error("Error getting company full details:", err);
       throw err;
     }
   }

@@ -33,8 +33,38 @@ router.get(
 
 router.get("/:companyId/details", authJwt, rbac("company_view"), companyController.getCompanyDetails);
 
+// Get company full details (plan, orders, payments, wallet, transactions)
+router.get("/:companyId/full-details", authJwt, rbac("company_view"), tryCatch(companyController.getFullDetails));
+
 // Get company transactions
 router.get("/:companyId/transactions", authJwt, rbac("company_view"), tryCatch(companyController.getTransactions));
+
+// Get company payment history
+router.get("/:companyId/payment-history", authJwt, rbac("company_view"), tryCatch(companyController.getPaymentHistory));
+
+// Record cash payment for company subscription
+router.post(
+  "/:companyId/record-cash-payment",
+  authJwt,
+  rbac("saas.company_record_payment"),
+  tryCatch(companyController.recordCashPayment)
+);
+
+// Upgrade subscription
+router.post(
+  "/subscriptions/:subscriptionId/upgrade",
+  authJwt,
+  rbac("saas.subscription_upgrade"),
+  tryCatch(companyController.upgradeSubscription)
+);
+
+// Reactivate subscription
+router.post(
+  "/subscriptions/:subscriptionId/reactivate",
+  authJwt,
+  rbac("saas.subscription_reactivate"),
+  tryCatch(companyController.reactivateSubscription)
+);
 
 // Update company
 router.put(

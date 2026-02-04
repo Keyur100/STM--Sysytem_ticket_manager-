@@ -165,7 +165,7 @@
 
   "saas.module_create", "saas.module_read", "saas.module_update", "saas.module_delete",
 
-  "saas.company_create", "saas.company_read", "saas.company_update", "saas.company_delete", "saas.company_manage"
+  "saas.company_create", "saas.company_read", "saas.company_update", "saas.company_delete", "saas.company_manage", "saas.company_record_payment", "saas.subscription_upgrade", "saas.subscription_reactivate"
 ]
 
 // add every time when new module permisiion added 

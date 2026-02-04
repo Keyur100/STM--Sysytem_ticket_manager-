@@ -741,7 +741,10 @@ const allModules=[
     { "key": "saas.company_read", "label": "Read Company" },
     { "key": "saas.company_update", "label": "Update Company" },
     { "key": "saas.company_delete", "label": "Delete Company" },
-    { "key": "saas.company_manage", "label": "Manage Company" }
+    { "key": "saas.company_manage", "label": "Manage Company" },
+    { "key": "saas.company_record_payment", "label": "Record Cash Payment" },
+    { "key": "saas.subscription_upgrade", "label": "Upgrade Subscription" },
+    { "key": "saas.subscription_reactivate", "label": "Reactivate Subscription" }
   ]
 }
 

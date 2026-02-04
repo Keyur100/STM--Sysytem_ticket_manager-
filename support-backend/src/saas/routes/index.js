@@ -7,6 +7,7 @@ const planRoutes = require("./plan.route");
 const subscriptionRoutes = require("./subscription.route");
 const walletRoutes = require("./wallet.route");
 const addonRoutes = require("./addon.route");
+const orderRoutes = require("./order.route");
 
 // Attach with prefixes
 router.use("/company", companyRoutes);
@@ -14,6 +15,7 @@ router.use("/plan", planRoutes);
 router.use("/subscriptions", subscriptionRoutes);
 router.use("/wallet", walletRoutes);
 router.use("/addons", addonRoutes);
+router.use("/order", orderRoutes);
 router.use("/module", require("./module.route"));
 router.use("/coupons", require("./coupon.route"));
 

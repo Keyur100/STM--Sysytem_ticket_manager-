@@ -20,7 +20,7 @@ const TransactionSchema = new Schema({
   },
   type: { 
     type: String, 
-    enum: ['WALLET_CREDIT', 'WALLET_DEBIT', 'SUBSCRIPTION_PURCHASE', 'REFUND', 'ADJUSTMENT'],
+    enum: ['WALLET_CREDIT', 'WALLET_DEBIT', 'SUBSCRIPTION_PURCHASE', 'REFUND', 'ADJUSTMENT','CASH_PAYMENT'],
     required: true,
     index: true
   },
