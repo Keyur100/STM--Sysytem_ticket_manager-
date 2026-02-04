@@ -863,7 +863,7 @@ class CompanyService {
       const remainingValue = Math.round((paidAmount / totalDays) * remainingDays);
       const subtotal = newPlan.pricePaise;
 
-      // Handle coupon
+      // Handle coupon.
       let discounts = [];
       if (couponCode) {
         const coupon = await couponModel.findOne({ code: couponCode, isActive: true });
