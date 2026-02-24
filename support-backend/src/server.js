@@ -13,17 +13,32 @@ const errorHandler = require("./middlewares/errorHandler");
   const app = express();
 
   // Enable CORS
-  app.use(cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:5173", // frontend URL
-    // credentials: true 
-  }));
+  const allowedOrigins = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(",")
+    : [];
+
+  app.use(
+    cors({
+      origin: function (origin, callback) {
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.includes(origin)) {
+          callback(null, true);
+        } else {
+          callback(new Error("Not allowed by CORS"));
+        }
+      },
+      credentials: true,
+    }),
+  );
 
   app.use(bodyParser.json());
   app.use(morgan("dev"));
 
   app.use("/api", routes);
 
-  app.get("/", (req, res) => res.json({ ok: true, message: "Finale Support API (merged with workers)" }));
+  app.get("/", (req, res) =>
+    res.json({ ok: true, message: "Finale Support API (merged with workers)" }),
+  );
 
   app.use(errorHandler);
 

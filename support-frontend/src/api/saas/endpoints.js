@@ -22,6 +22,13 @@ const endpoints = {
     list: "/saas/addons",
     get: (id) => `/saas/addons/${id}`,
   },
+  branch: {
+    list: "/saas/branch",
+    get: (id) => `/saas/branch/${id}`,
+    create: "/saas/branch",
+    update: (id) => `/saas/branch/${id}`,
+    remove: (id) => `/saas/branch/${id}`,
+  },
 };
 
 export default endpoints;

@@ -105,43 +105,43 @@ const OrderSchema = new Schema({
 
 OrderSchema.index({ companyId: 1, status: 1, createdAt: -1 });
 
-OrderSchema.methods.computeFinal = function computeFinal() {
-  const totals = this.totals || {};
-  const totalPayable = Number(totals.totalPayablePaise || 0);
+// OrderSchema.methods.computeFinal = function computeFinal() {
+//   const totals = this.totals || {};
+//   const totalPayable = Number(totals.totalPayablePaise || 0);
 
-  const walletUsedAmount = (this.walletUsed && Number(this.walletUsed.amountPaise)) || 0;
+//   const walletUsedAmount = (this.walletUsed && Number(this.walletUsed.amountPaise)) || 0;
 
-  const paymentsSum = Array.isArray(this.payments)
-    ? this.payments.reduce((sum, p) => {
-        if (!p) return sum;
-        const amt = Number(p.amountPaise || 0);
-        const status = p.status;
-        return sum + (status === 'success' ? amt : 0);
-      }, 0)
-    : 0;
+//   const paymentsSum = Array.isArray(this.payments)
+//     ? this.payments.reduce((sum, p) => {
+//         if (!p) return sum;
+//         const amt = Number(p.amountPaise || 0);
+//         const status = p.status;
+//         return sum + (status === 'success' ? amt : 0);
+//       }, 0)
+//     : 0;
 
-  const refunded = (this.final && Number(this.final.refundedAmountPaise)) || 0;
+//   const refunded = (this.final && Number(this.final.refundedAmountPaise)) || 0;
 
-  const totalPaid = paymentsSum + walletUsedAmount;
+//   const totalPaid = paymentsSum + walletUsedAmount;
 
-  // amountDuePaise = totalPayable - totalPaid + refunded
-  let amountDue = totalPayable - totalPaid + refunded;
-  if (amountDue < 0) amountDue = 0;
+//   // amountDuePaise = totalPayable - totalPaid + refunded
+//   let amountDue = totalPayable - totalPaid + refunded;
+//   if (amountDue < 0) amountDue = 0;
 
-  this.final = this.final || {};
-  this.final.totalPaidPaise = Number(totalPaid || 0);
-  this.final.refundedAmountPaise = Number(refunded || 0);
-  this.final.amountDuePaise = Number(amountDue || 0);
-};
+//   this.final = this.final || {};
+//   this.final.totalPaidPaise = Number(totalPaid || 0);
+//   this.final.refundedAmountPaise = Number(refunded || 0);
+//   this.final.amountDuePaise = Number(amountDue || 0);
+// };
 
-// Ensure final fields are computed before validation/save
-OrderSchema.pre('validate', function preValidateCompute(next) {
-  try {
-    this.computeFinal();
-  } catch (err) {
-    return next(err);
-  }
-  return next();
-});
+// // Ensure final fields are computed before validation/save
+// OrderSchema.pre('validate', function preValidateCompute(next) {
+//   try {
+//     this.computeFinal();
+//   } catch (err) {
+//     return next(err);
+//   }
+//   return next();
+// });
 
 module.exports = mongoose.model('Order', OrderSchema);

@@ -19,7 +19,7 @@ const PlanSchema = new Schema({
   durationDays: { type: Number, default: null },  
   pricePaise: { type: Number, default: 0 },// similiar to planPricePaise of company 
   hasTax: { type: Boolean, default: true },// apply tax if true
-  taxIncluded: { type: Boolean, default: true },
+  taxIncluded: { type: Boolean, default: true },//false means add tax on top of price, true means price already includes tax
   taxName: { type: String, default: "GST" },
   userPricing: Schema.Types.Mixed, //UserPricingSchema, // similiar to maxProvision of company
   // UPDATED SCHEMA TYPE ARRAY

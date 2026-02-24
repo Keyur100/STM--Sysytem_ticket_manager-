@@ -3,7 +3,7 @@ import React from "react";
 import { Box, CssBaseline, Toolbar } from "@mui/material";
 import { Outlet, useLocation } from "react-router-dom";
 import Topbar from "./TopBar";
-import Sidebar from "./Sidebar";
+import Sidebar from "./SideBar";
 
 const drawerWidth = 240;
 

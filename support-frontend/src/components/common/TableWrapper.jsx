@@ -20,7 +20,7 @@ import {
 } from "@mui/material";
 import EditIcon from "@mui/icons-material/Edit";
 import DeleteIcon from "@mui/icons-material/Delete";
-import AddCircleIcon from "@mui/icons-material/AddCircle";VisibilityIcon
+import AddCircleIcon from "@mui/icons-material/AddCircle";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 
 import usePermissions from "../../helpers/hooks/usePermissions";
@@ -47,9 +47,14 @@ export default function TableWrapper({
   editPerm,
   deletePerm,
   hideDelete = false,
+  hideEdit = false,
+  hideView = false,
+  hideAdd = false,
   addLabel = "Add New",
 }) {
   const { hasPermission } = usePermissions();
+
+  const [searchText, setSearchText] = useState("");
 
   const [openDialog, setOpenDialog] = useState(false);
   const [selectedRow, setSelectedRow] = useState(null);
@@ -83,10 +88,15 @@ export default function TableWrapper({
           <TextField
             size="small"
             placeholder={searchPlaceHolder || "Search..."}
-            onChange={(e) => onSearchChange?.(e.target.value)}
+            value={searchText}
+            onChange={(e) => {
+              const v = e.target.value;
+              setSearchText(v);
+              onSearchChange?.(v);
+            }}
           />
 
-          {onAdd && hasPermission(onAdd.perm) && (
+          {onAdd && !hideAdd && hasPermission(onAdd.perm) && (
             <Button
               variant="contained"
               startIcon={<AddCircleIcon />}
@@ -134,11 +144,17 @@ export default function TableWrapper({
                   )}
                 </TableCell>
               ))}
-              {(hasPermission(editPerm) || (!hideDelete && hasPermission(deletePerm))) && (
-                <TableCell align="center">
-                  <b>Actions</b>
-                </TableCell>
-              )}
+              {(() => {
+                const showActions =
+                  (hasPermission(editPerm) && !hideEdit) ||
+                  (!hideDelete && hasPermission(deletePerm)) ||
+                  (onView && !hideView);
+                return showActions ? (
+                  <TableCell align="center">
+                    <b>Actions</b>
+                  </TableCell>
+                ) : null;
+              })()}
             </TableRow>
           </TableHead>
 
@@ -157,63 +173,70 @@ export default function TableWrapper({
                   </TableCell>
                 ))}
 
-                {(hasPermission(editPerm) || (!hideDelete && hasPermission(deletePerm))) && (
-                  <TableCell align="center">
-                    {/* 🔹 Horizontal Stack for Actions */}
-                    <Stack direction="row" justifyContent="center" spacing={1}>
-                      {hasPermission(editPerm) && onEdit && (
-                        <Tooltip title="Edit" arrow>
-                          <IconButton
-                            color="primary"
-                            size="small"
-                            onClick={() => onEdit(row)}
-                            sx={{
-                              "&:hover": { backgroundColor: "rgba(33, 150, 243, 0.1)" },
-                            }}
-                          >
-                            <EditIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                      )}
+                {(() => {
+                  const showActions =
+                    (hasPermission(editPerm) && !hideEdit) ||
+                    (!hideDelete && hasPermission(deletePerm)) ||
+                    (onView && !hideView);
+                  if (!showActions) return null;
 
-                      {!hideDelete && hasPermission(deletePerm) && onDelete && (
-                        <Tooltip title="Delete" arrow>
-                          <IconButton
-                            color="error"
-                            size="small"
-                            onClick={() => handleDeleteClick(row)}
-                            sx={{
-                              "&:hover": { backgroundColor: "rgba(244, 67, 54, 0.1)" },
-                            }}
-                          >
-                            <DeleteIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                      )}
+                  return (
+                    <TableCell align="center">
+                      <Stack direction="row" justifyContent="center" spacing={1}>
+                        {hasPermission(editPerm) && !hideEdit && onEdit && (
+                          <Tooltip title="Edit" arrow>
+                            <IconButton
+                              color="primary"
+                              size="small"
+                              onClick={() => onEdit(row)}
+                              sx={{
+                                "&:hover": { backgroundColor: "rgba(33, 150, 243, 0.1)" },
+                              }}
+                            >
+                              <EditIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        )}
 
-{ onView && (
-  <Tooltip title="View" arrow>
-    <IconButton
-      color="secondary"
-      size="small"
-      onClick={() => onView(row)}
-      sx={{
-        "&:hover": { backgroundColor: "rgba(156, 39, 176, 0.1)" },
-      }}
-    >
-      <VisibilityIcon fontSize="small" />
-    </IconButton>
-  </Tooltip>
-)}
-                    </Stack>
-                  </TableCell>
-                )}
+                        {!hideDelete && hasPermission(deletePerm) && onDelete && (
+                          <Tooltip title="Delete" arrow>
+                            <IconButton
+                              color="error"
+                              size="small"
+                              onClick={() => handleDeleteClick(row)}
+                              sx={{
+                                "&:hover": { backgroundColor: "rgba(244, 67, 54, 0.1)" },
+                              }}
+                            >
+                              <DeleteIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        )}
+
+                        {onView && !hideView && (
+                          <Tooltip title="View" arrow>
+                            <IconButton
+                              color="secondary"
+                              size="small"
+                              onClick={() => onView(row)}
+                              sx={{
+                                "&:hover": { backgroundColor: "rgba(156, 39, 176, 0.1)" },
+                              }}
+                            >
+                              <VisibilityIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        )}
+                      </Stack>
+                    </TableCell>
+                  );
+                })()}
               </TableRow>
             ))}
 
             {data.length === 0 && (
               <TableRow>
-                <TableCell colSpan={columns.length + 1} align="center">
+                <TableCell colSpan={columns.length + ( (hasPermission(editPerm) && !hideEdit) || (!hideDelete && hasPermission(deletePerm)) || (onView && !hideView) ? 1 : 0 )} align="center">
                   No records found
                 </TableCell>
               </TableRow>

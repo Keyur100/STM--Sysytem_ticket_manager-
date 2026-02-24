@@ -299,4 +299,39 @@ flowchart TD
     J --> K[selectDepartment API]
     K --> L[issueTokensAndReturn (access + refresh + user with department)]
     L --> H
-//TODO square off paise in order creation 
+//TODO future square off paise in order creation 
+<!-- If you want next level:
+
+Redis-based rate limiting
+
+Redis-based login attempt blocker
+
+Multi-session refresh tokens
+
+Redis cluster scaling
+
+BullMQ background job workers
+
+Horizontal backend scaling 
+
+🔥 How to scale backend to multiple instances
+
+🔥 How Redis behaves in multi-instance setup
+
+Authentication (JWT, API key)
+
+Rate limiting
+
+IP restrictions
+
+HTTPS
+
+WAF / firewall
+How to protect against brute force login
+How to add Nginx-level security rules
+
+//discount
+Ensured discount allocation is applied against excluded base (code already implemented that way)
+
+//inc;uded tax formula -- amount*tax_percent/100+tax_percent
+-->

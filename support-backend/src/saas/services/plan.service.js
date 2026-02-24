@@ -5,7 +5,7 @@ const Plan = require('../models/plan.model');
 const Subscription = require('../models/subscription.model');
 const Company = require('../models/company.model');
 const Wallet = require('../models/wallet.model');
-const { Job } = require('../models/job.model');
+const { Job } = require('../../models/job.model');
 const { JOB_TYPES } = require('../constants/job.constant');
 // const Audit = require('../models/audit.model');
 
@@ -30,6 +30,10 @@ class PlanService {
    */
   static async getPlanByCode(code) {
     return Plan.findOne({ code, isActive: true });
+  }
+
+  static async getPlanById(id) {
+    return Plan.findById(id);
   }
 
   /**

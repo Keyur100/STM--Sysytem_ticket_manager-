@@ -34,8 +34,9 @@ const CouponModal = ({ open, onClose, onSelect, companyId, planCode }) => {
       const queryParam = planCode ? `?planCode=${planCode}` : "";
       const res = await api.get(`/saas/coupons/get-perticular/${companyId}${queryParam}`);
       const allCoupons = [
-        ...(res.data?.globalCoupons || []),
-        ...(res.data?.companyCoupons || []),
+        ...(res.data?.coupons || []),
+        // ...(res.data?.globalCoupons || []),
+        // ...(res.data?.companyCoupons || []),
       ];
       console.log("Fetched coupons:", allCoupons);
       setCoupons(allCoupons);

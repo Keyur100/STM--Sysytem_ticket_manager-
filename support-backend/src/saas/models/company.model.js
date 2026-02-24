@@ -58,6 +58,10 @@ const CompanySchema = new Schema(
 
     // EXTRA V1
     logo: String,
+    // Store the plan snapshot assigned to this company. This is a company-specific
+    // copy of the plan (price, modulePermissions, enabled flags) and must be
+    // used for billing/permission decisions instead of the canonical plan doc.
+    planSnapshot: Schema.Types.Mixed,
   },
   { timestamps: true }
 );

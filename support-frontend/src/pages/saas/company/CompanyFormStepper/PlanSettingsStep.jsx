@@ -26,7 +26,7 @@ import EmojiEventsIcon from "@mui/icons-material/EmojiEvents";
 import api from "../../../../api/axios";
 import Loader from "../../../../components/common/Loader";
 
-export default function PlanSettingsStep({ form, handleChange }) {
+export default function PlanSettingsStep({ form, handleChange, plansOverride = null }) {
   const [plans, setPlans] = useState([]);
   const [selectedPlan, setSelectedPlan] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -35,14 +35,20 @@ export default function PlanSettingsStep({ form, handleChange }) {
   const fetchPlans = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await api.get("/saas/plan");
-      setPlans(res.data.plans || []);
+      if (plansOverride && Array.isArray(plansOverride)) {
+        setPlans(plansOverride);
+      } else {
+        const res = await api.get("/saas/plan");
+        // backend wraps response in { success, message, data }
+        const payload = res?.data ?? res?.plans ?? res?.items ?? res ?? [];
+        setPlans(Array.isArray(payload) ? payload : payload.plans || []);
+      }
     } catch (err) {
       console.error("Failed to fetch plans:", err);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [plansOverride]);
 
   useEffect(() => {
     fetchPlans();
@@ -67,7 +73,6 @@ export default function PlanSettingsStep({ form, handleChange }) {
   const handleSelectPlan = useCallback(
     (plan) => {
       if (!plan) return;
-
       if (form.plan && form.plan._id === plan._id && checkPlanModified(form, plan)) {
         setSelectedPlan(plan);
         return;
@@ -187,7 +192,8 @@ export default function PlanSettingsStep({ form, handleChange }) {
         display: "flex",
         flexDirection: "row",
         gap: 3,
-        height: "80vh",
+        height: "100%",
+        minHeight: 420,
         overflow: "hidden",
       }}
     >
@@ -347,7 +353,7 @@ function useDebounce(value, delay = 300) {
 }
 
 const PlanDetailPanel = React.memo(
-  ({ form, onPriceChange, onDurationChange, onMaxChange, togglePermission, toggleAll, handleReset }) => {
+  ({ form, onPriceChange, onDurationChange, onMaxChange, togglePermission, toggleAll }) => {
     const [searchTerm, setSearchTerm] = useState("");
     const debouncedSearchTerm = useDebounce(searchTerm, 300); // 300ms debounce
     const selectedPlan = form.plan;

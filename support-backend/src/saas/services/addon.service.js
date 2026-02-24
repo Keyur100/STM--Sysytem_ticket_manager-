@@ -14,7 +14,7 @@ class AddonService {
   static async getAllAddons() {
     try {
       const addons = await Addon.find({ isActive: true, isDeleted: false })
-        .select('value name description pricePaise hasTax taxName')
+        .select('value name description pricePaise hasTax taxName taxIncluded')
         .lean();
       
       return {

@@ -22,20 +22,29 @@ import { Link, useNavigate } from "react-router-dom";
 import { Edit as EditIcon, Delete as DeleteIcon } from "@mui/icons-material";
 import api from "../../../api/axios";
 import usePermissions from "../../../helpers/hooks/usePermissions";
+import TableWrapper from "../../../components/common/TableWrapper";
+import useDebounce from "../../../helpers/hooks/useDebounce";
 
 export default function ModuleList() {
   const [modules, setModules] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [deleteDialog, setDeleteDialog] = useState({ open: false, module: null });
+  const [page, setPage] = useState(0);
+  const [limit, setLimit] = useState(10);
+  const [total, setTotal] = useState(0);
+  const [q, setQ] = useState("");
+  const [order, setOrder] = useState("asc");
+  const [orderBy, setOrderBy] = useState("moduleKey");
   const nav = useNavigate();
   const { hasPermission } = usePermissions();
 
   const fetchModules = async () => {
     try {
       setLoading(true);
-      const res = await api.get("/saas/module");
-      setModules(res.data?.modules || []);
+      const res = await api.get("/saas/module", { params: { page: page + 1, limit, q, order, orderBy } });
+      setModules(res.data?.modules || res.data || []);
+      setTotal(res.data?.total || (res.data?.modules?.length || res.data?.length || 0));
       setError(null);
     } catch (err) {
       setError(err.response?.data?.message || "Failed to load modules");
@@ -46,7 +55,13 @@ export default function ModuleList() {
 
   useEffect(() => {
     fetchModules();
-  }, []);
+  }, [page, limit, q, order, orderBy]);
+
+   /** 🔹 Debounce search input */
+    const debouncedSearch = useDebounce((v) => {
+      setQ(v);
+      setPage(0);
+    }, 400);
 
   const handleDelete = async () => {
     try {
@@ -66,7 +81,7 @@ export default function ModuleList() {
         <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
           <h3 style={{ margin: 0 }}>Modules</h3>
           {hasPermission("saas.module_create") && (
-            <Button component={Link} to="/saas/modules/new" variant="contained">
+            <Button component={Link} to="/modules/new" variant="contained">
               Add Module
             </Button>
           )}
@@ -75,67 +90,36 @@ export default function ModuleList() {
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
         <TableContainer>
-          <Table>
-            <TableHead sx={{ backgroundColor: "#f5f5f5" }}>
-              <TableRow>
-                <TableCell><strong>Module Key</strong></TableCell>
-                <TableCell><strong>Display Name</strong></TableCell>
-                <TableCell><strong>Group</strong></TableCell>
-                <TableCell><strong>Actions</strong></TableCell>
-                <TableCell><strong>Status</strong></TableCell>
-                <TableCell><strong>Actions</strong></TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {modules.map((module) => (
-                <TableRow key={module._id} hover>
-                  <TableCell>{module.moduleKey}</TableCell>
-                  <TableCell>{module.displayName}</TableCell>
-                  <TableCell>{module.group}</TableCell>
-                  <TableCell>
-                    <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
-                      {module.actions?.map((action) => (
-                        <Chip
-                          key={action.key}
-                          label={action.label}
-                          size="small"
-                          variant="outlined"
-                        />
-                      ))}
-                    </Box>
-                  </TableCell>
-                  <TableCell>
-                    <Chip
-                      label={module.isActive ? "Active" : "Inactive"}
-                      color={module.isActive ? "success" : "default"}
-                      size="small"
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <Box sx={{ display: "flex", gap: 1 }}>
-                      {hasPermission("saas.module_update") && (
-                        <IconButton
-                          size="small"
-                          onClick={() => nav(`/saas/modules/${module._id}/edit`)}
-                        >
-                          <EditIcon fontSize="small" />
-                        </IconButton>
-                      )}
-                      {hasPermission("saas.module_delete") && (
-                        <IconButton
-                          size="small"
-                          color="error"
-                          onClick={() => setDeleteDialog({ open: true, module })}
-                        >
-                          <DeleteIcon fontSize="small" />
-                        </IconButton>
-                      )}
-                    </Box>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <TableWrapper
+            data={modules}
+            columns={[
+              { field: 'moduleKey', label: 'Module Key', sortable: true },
+              { field: 'displayName', label: 'Display Name' },
+              { field: 'group', label: 'Group' },
+              { field: 'actions', label: 'Actions', render: (r) => (
+                <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>{(r.actions||[]).map(a => <Chip key={a.key} label={a.label} size="small" variant="outlined" />)}</Box>
+              )},
+              { field: 'isActive', label: 'Status', render: (r) => (
+                <Chip label={r.isActive ? 'Active' : 'Inactive'} color={r.isActive ? 'success' : 'default'} size="small" />
+              )}
+            ]}
+            total={total}
+            page={page}
+            rowsPerPage={limit}
+            onPageChange={(p) => setPage(p)}
+            onRowsPerPageChange={(n) => { setLimit(n); setPage(0); }}
+            onSortChange={(field, dir) => { setOrderBy(field); setOrder(dir); }}
+            order={order}
+            orderBy={orderBy}
+            onSearchChange= { debouncedSearch }
+            searchPlaceHolder={'Search modules.'}
+            onAdd={{ fn: () => nav('/modules/new'), perm: 'saas.module_create' }}
+            onEdit={(r) => nav(`/modules/${r._id}/edit`)}
+            onDelete={(r) => setDeleteDialog({ open: true, module: r })}
+            editPerm={'saas.module_update'}
+            deletePerm={'saas.module_delete'}
+            addLabel={'Add Module'}
+          />
         </TableContainer>
 
         {modules.length === 0 && !loading && (

@@ -1,6 +1,4 @@
-const mongoose = require("mongoose");
-const dotenv = require("dotenv");
-dotenv.config();
+require("dotenv").config();
 
 const Plan = require("../models/plan.model");
 const Module = require("../models/module.model");
@@ -14,14 +12,7 @@ const { allModules } = require("./data/modules.data");
 const couponData = require("./data/coupons.data"); // Import coupon data
 const addonData = require("./data/addon.data"); // Import addon data
 
-// Connect to DB
-async function connectDB() {
-  await mongoose.connect("mongodb://localhost:27017/support_ticket", {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-  });
-  console.log("✅ MongoDB connected for seeding...");
-}
+const { connectMongoose } = require("../../models/mongoose");
 
 // Get Superadmin ID
 async function getSuperAdminId() {
@@ -36,9 +27,16 @@ async function getSuperAdminId() {
 async function seedModules() {
   console.log("🚀 Seeding Modules...");
   for (const mod of allModules) {
+    // Strip non-schema fields from actions to match ModuleSchema (only key and label are allowed)
+    const actions = Array.isArray(mod.actions)
+      ? mod.actions.map(a => ({ key: a.key, label: a.label,id: a.id, parentId: a.parentId })) // Keep only key and label for actions
+      : [];
+
+    const modToSet = { ...mod, actions };
+
     await Module.findOneAndUpdate(
       { moduleKey: mod.moduleKey }, // find by unique key
-      { $set: mod }, // update fields
+      { $set: modToSet }, // update fields with cleaned actions
       { new: true, upsert: true } // create if not exists
     );
   }
@@ -130,7 +128,9 @@ async function seedAddons(superAdminId) {
 // Run Seeder
 (async () => {
   try {
-    await connectDB();
+    console.log("🚀 Starting seeding process...",process.env.MONGO_URI);
+    
+    await connectMongoose(process.env.MONGO_URI);
     const superAdminId = await getSuperAdminId(); // Get the superadmin ID
     await seedModules();
     await seedPlans();

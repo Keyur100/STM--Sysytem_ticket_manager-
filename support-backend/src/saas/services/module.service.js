@@ -1,6 +1,6 @@
 // src/saas/services/module.service.js
 const Module = require("../models/module.model");
-const { Job } = require("../models/job.model");
+const { Job } = require("../../models/job.model");
 const { JOB_TYPES } = require("../constants/job.constant");
 
 class ModuleService {
@@ -34,15 +34,15 @@ class ModuleService {
    * 📋 Get all modules with filters + pagination
    */
   static async getAllModules(query) {
-    const { page = 1, limit = 20, search, isActive } = query;
+    const { page = 1, limit = 20, q:search, isActive } = query;
 
     const filter = { isDeleted: false };
 
     if (search) {
       filter.$or = [
         { group: new RegExp(search, "i") },
-        { moduleKey: new RegExp(search, "i") },
-        { displayName: new RegExp(search, "i") },
+        // { moduleKey: new RegExp(search, "i") },
+        // { displayName: new RegExp(search, "i") },
       ];
     }
 

@@ -63,7 +63,11 @@ const tryCatch = require('../../middlewares/tryCatch');
 
 router.get('/get-perticular/:companyId', authJwt, tryCatch(couponController.getAll));
 router.post('/', authJwt, tryCatch(couponController.create));
-router.get('/', authJwt, tryCatch(couponController.getAllCoupon));
+// List coupons with pagination/search/sort (supports optional planCode/companyId)
+router.get('/', authJwt, tryCatch(couponController.getAll));
+router.get('/:id', authJwt, tryCatch(couponController.getById));
+router.put('/:id', authJwt, tryCatch(couponController.update));
+router.delete('/:id', authJwt, tryCatch(couponController.remove));
 
 router.post('/apply', authJwt, tryCatch(couponController.applyCoupon));
 

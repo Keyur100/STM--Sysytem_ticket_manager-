@@ -247,6 +247,39 @@ const reactivateSubscription = async (req, res) => {
     return sendError(res, 400, err.message || "Failed to reactivate subscription");
   }
 };
+
+const deleteCompany = async (req, res) => {
+  try {
+    const { companyId } = req.params;
+    const deletedBy = req.user?._id;
+    const result = await CompanyService.softDeleteCompany(companyId, deletedBy);
+    return sendSuccess(res, result, "Company soft-deleted successfully");
+  } catch (err) {
+    console.error('Error deleting company:', err);
+    return sendError(res, 500, err.message || 'Failed to delete company');
+  }
+};
+
+const listDeletedCompanies = async (req, res) => {
+  try {
+    const result = await CompanyService.listDeletedCompanies(req.query || {});
+    return sendSuccess(res, result, 'Deleted companies fetched');
+  } catch (err) {
+    console.error('Error listing deleted companies:', err);
+    return sendError(res, 500, err.message || 'Failed to fetch deleted companies');
+  }
+};
+
+const restoreCompany = async (req, res) => {
+  try {
+    const { companyId } = req.params;
+    const restored = await CompanyService.restoreCompany(companyId, req.user?._id);
+    return sendSuccess(res, restored, 'Company restored');
+  } catch (err) {
+    console.error('Error restoring company:', err);
+    return sendError(res, 500, err.message || 'Failed to restore company');
+  }
+};
 const getPaymentHistory = async (req, res) => {
   try {
     const companyId = req.params.companyId;
@@ -294,6 +327,9 @@ module.exports = {
   recordCashPayment,
   upgradeSubscription,
   reactivateSubscription,
+  deleteCompany,
+  listDeletedCompanies,
+  restoreCompany,
   getPaymentHistory,
   getFullDetails,
 };

@@ -70,7 +70,7 @@ export default function ModuleForm() {
         } else {
           await api.put(`/saas/module/${id}`, values);
         }
-        nav("/saas/modules");
+        nav("/modules");
       } catch (err) {
         setError(err.response?.data?.message || "Failed to save module");
       }
@@ -267,7 +267,7 @@ export default function ModuleForm() {
                 <Button variant="contained" type="submit">
                   {isNew ? "Create Module" : "Update Module"}
                 </Button>
-                <Button variant="outlined" onClick={() => nav("/saas/modules")}>
+                <Button variant="outlined" onClick={() => nav("/modules")}>
                   Cancel
                 </Button>
               </Box>

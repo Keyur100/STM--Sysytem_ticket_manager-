@@ -41,6 +41,8 @@ const CompanyView = React.memo(() => {
   const [amount, setAmount] = useState("");
   const [transactions, setTransactions] = useState([]);
   const [loadingTransactions, setLoadingTransactions] = useState(false);
+  const [branches, setBranches] = useState([]);
+  const [clientUsers, setClientUsers] = useState([]);
 
   // ✅ Define fetchTransactions FIRST (before other callbacks that use it)
   const fetchTransactions = useCallback(async (id) => {
@@ -91,6 +93,17 @@ const CompanyView = React.memo(() => {
       dispatch(getCompany(companyId));
       dispatch(getWallet(companyId));
       fetchTransactions(companyId);
+      // fetch full details including branches & client users
+      (async () => {
+        try {
+          const res = await api.get(`/saas/company/${companyId}/full-details`);
+          const data = res.data || {};
+          setBranches(data.branches || []);
+          setClientUsers(data.clientUsers || []);
+        } catch (err) {
+          console.error('Failed to fetch company full details', err);
+        }
+      })();
     }
   }, [dispatch, companyId, fetchTransactions]);
 
@@ -134,6 +147,50 @@ const CompanyView = React.memo(() => {
         <Typography><strong>Plan Name:</strong> {planData?.name || "-"}</Typography>
         <Typography><strong>Duration:</strong> {planData?.durationDays || "-"} days</Typography>
         <Typography><strong>Price:</strong> ₹{planData?.pricePaise ? planData.pricePaise / 100 : "-"}</Typography>
+        <Box display="flex" gap={2} sx={{ mt: 2 }}>
+          <Button variant="outlined" onClick={() => navigate(`/branches?companyId=${companyId}`)}>Manage Branches</Button>
+        </Box>
+        {/* Branches */}
+        {branches && branches.length > 0 && (
+          <Box sx={{ mt: 2 }}>
+            <Typography variant="subtitle1" fontWeight="bold">Branches</Typography>
+            {branches.map((b) => (
+              <Paper key={b._id} sx={{ p: 1, mt: 1 }}>
+                <Typography><strong>{b.name}</strong> — {b.address || '-'}</Typography>
+                <Typography variant="caption">Phone: {b.phone || '-'} • Email: {b.email || '-'}</Typography>
+              </Paper>
+            ))}
+          </Box>
+        )}
+
+        {/* Addons snapshot (if any) */}
+        {planData?.addonSnapshot && planData.addonSnapshot.length > 0 && (
+          <Box sx={{ mt: 2 }}>
+            <Typography variant="subtitle1" fontWeight="bold">Add-ons</Typography>
+            {planData.addonSnapshot.map((addon, idx) => {
+              const qty = addon.qty || addon.quantity || 1;
+              const price = (addon.pricePaise || 0) / 100;
+              return (
+                <Box key={idx} sx={{ mt: 1 }}>
+                  <Typography>• {addon.name} — {qty} × ₹{price.toFixed(2)} = ₹{(price * qty).toFixed(2)}</Typography>
+                </Box>
+              );
+            })}
+          </Box>
+        )}
+
+        {/* Client Users */}
+        {clientUsers && clientUsers.length > 0 && (
+          <Box sx={{ mt: 2 }}>
+            <Typography variant="subtitle1" fontWeight="bold">Client Users</Typography>
+            {clientUsers.map((u) => (
+              <Paper key={u._id} sx={{ p: 1, mt: 1 }}>
+                <Typography><strong>{u.name}</strong> — {u.email}</Typography>
+                <Typography variant="caption">Phone: {u.phone || '-'}</Typography>
+              </Paper>
+            ))}
+          </Box>
+        )}
         {/* <Typography><strong>Plan Expiry:</strong> {selected?.planExpiry ? new Date(selected.planExpiry).toLocaleDateString() : "-"}</Typography> */}
       </Paper>
 

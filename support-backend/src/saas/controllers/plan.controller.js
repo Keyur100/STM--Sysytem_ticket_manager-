@@ -42,8 +42,17 @@ exports.getAllPlans = async (req, res) => {
  */
 exports.getPlanByCode = async (req, res) => {
   try {
-    const { code } = req.params;
-    const plan = await PlanService.getPlanByCode(code);
+    const identifier = req.params.code;
+    let plan = null;
+
+    // If identifier looks like an ObjectId, try find by id first
+    if (identifier && /^[0-9a-fA-F]{24}$/.test(identifier)) {
+      plan = await PlanService.getPlanById(identifier).catch(() => null);
+    }
+
+    // Fallback to code lookup
+    if (!plan) plan = await PlanService.getPlanByCode(identifier);
+
     if (!plan) return sendError(res, 404, 'Plan not found');
     return sendSuccess(res, plan, 'Plan fetched successfully');
   } catch (err) {

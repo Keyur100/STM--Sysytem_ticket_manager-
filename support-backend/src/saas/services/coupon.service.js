@@ -9,49 +9,58 @@ class CouponService {
       .toUpperCase();
     const exists = await Coupon.findOne({ code: payload.code });
     if (exists) throw new Error("Coupon already exists");
+    // Ensure fixed discount values are stored in paise
+    if (payload.discountType !== CouponType.PERCENT) {
+      payload.discountValue = Math.round(Number(payload.discountValue || 0) * 100);
+    }
     return Coupon.create({ ...payload, createdBy: userId });
   }
 
   static async getAll(q = {}, planCode = null) {
-    console.log("CouponService.getAll called with planCode:", planCode);
-    
-    // Build filter for plan-specific coupons
-    // If planCode provided, only show coupons that either:
-    // 1. Have no eligiblePlanCodes restriction (global coupons)
-    // 2. Include this planCode in their eligiblePlanCodes array
-    const planFilter = planCode 
-      ? {
-          $or: [
-            { eligiblePlanCodes: { $size: 0 } },           // No restrictions
-            { eligiblePlanCodes: { $in: [planCode] } }     // This plan code is eligible
-          ]
-        }
-      : {};
-    
-    // Fetch global coupons (no company, no plan restriction)
-    const globalCoupons = await Coupon.find({ 
-      companyId: null,
-      ...planFilter
-    }).sort({
-      createdAt: -1,
-    });
-    
-    // Fetch company coupons (specific to companies)
-    const companyCoupons = await Coupon.find({
-      ...planFilter
-    }).sort({ createdAt: -1 });
+    // Accept standard list params: page, limit, search, sortBy, sortOrder, companyId
+    const page = parseInt(q.page || 1, 10) || 1;
+    const limit = parseInt(q.limit || 20, 10) || 20;
+    const search = (q.search || q.q || "").trim();
+    const sortBy = q.sortBy || q.orderBy || "createdAt";
+    const sortOrder = (q.sortOrder || q.order || "desc").toLowerCase() === "asc" ? 1 : -1;
+    const companyId = q.companyId || null;
 
-    console.log("Global coupons found:", globalCoupons.length);
-    console.log("Company coupons found:", companyCoupons.length);
-    console.log("Filtered coupons:", { globalCoupons, companyCoupons });
+    const filter = {};
+    if (companyId) filter.companyId = companyId;
 
-    return { globalCoupons, companyCoupons };
+    // planCode filter: coupons with no restriction OR include this planCode
+    if (planCode) {
+      filter.$or = [
+        { eligiblePlanCodes: { $size: 0 } },
+        { eligiblePlanCodes: { $in: [planCode] } },
+      ];
+    }
+
+    if (search) {
+      filter.$or = filter.$or || [];
+      filter.$or.push({ code: new RegExp(search, "i") }, { description: new RegExp(search, "i") });
+    }
+
+    const total = await Coupon.countDocuments(filter);
+    const coupons = await Coupon.find(filter)
+      .sort({ [sortBy]: sortOrder })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
+
+    // add scope for frontend convenience
+    const mapped = (coupons || []).map(c => ({ ...c, scope: c.companyId ? 'Company' : 'Global' }));
+
+    return { coupons: mapped, total, page, limit };
   }
 
   static async getAllCoupon(q = {}) {
     const filter = {};
 
-    await Coupon.find(filter).sort({ createdAt: -1 });
+    const coupons = await Coupon.find(filter).sort({ createdAt: -1 });
+
+    const globalCoupons = coupons.filter(c => !c.companyId);
+    const companyCoupons = coupons.filter(c => c.companyId);
 
     return { globalCoupons, companyCoupons };
   }
@@ -61,6 +70,10 @@ class CouponService {
   }
 
   static async update(id, payload, userId) {
+    // Ensure fixed discount values are stored in paise
+    if (payload.discountType && payload.discountType !== CouponType.PERCENT && payload.discountValue !== undefined) {
+      payload.discountValue = Math.round(Number(payload.discountValue || 0) * 100);
+    }
     return Coupon.findByIdAndUpdate(
       id,
       { ...payload, updatedBy: userId },
@@ -87,6 +100,12 @@ class CouponService {
       throw new Error("Coupon expired");
     if (coupon.usedCount >= coupon.maxUses) //todo deduct -and reduce reset token time for hack
       throw new Error("Coupon usage limit reached");
+    // Ensure maxUses is honoured only when set (>0)
+    if (coupon.maxUses && Number(coupon.maxUses) > 0) {
+      const used = Number(coupon.usedCount || 0);
+      const max = Number(coupon.maxUses || 0);
+      if (used >= max) throw new Error("Coupon usage limit reached");
+    }
     if ((coupon.minSpendPaise || 0) > amountPaise)
       throw new Error("Minimum spend not met");
     if (

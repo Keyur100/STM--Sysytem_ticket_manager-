@@ -3,9 +3,11 @@ import axios from "axios";
 import store from "../store";
 import { setLoading, setError } from "../store/slices/uiSlice";
 import { setAuth, clearAuth } from "../store/slices/authSlice";
+import { API_BASE } from "../config/api";
+const isDev = import.meta.env.DEV;
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || "/api",
+  baseURL: isDev ?import.meta.env.VITE_API_URL:API_BASE || "/api",
   timeout: 1400000,//40000
 });
 

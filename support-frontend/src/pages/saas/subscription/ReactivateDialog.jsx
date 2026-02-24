@@ -15,9 +15,9 @@ import {
   CardContent,
   Typography,
 } from "@mui/material";
-import api from "../../../api/api";
+import api from "../../../api/axios";
 
-export default function ReactivateDialog({ open, subscription, company, onClose, onSuccess }) {
+export default function ReactivateDialog({ open, subscription, onClose, onSuccess }) {
   const [couponCode, setCouponCode] = useState("");
   const [useWallet, setUseWallet] = useState(false);
   const [loading, setLoading] = useState(false);

@@ -12,9 +12,11 @@ import { signupCompany } from "../../../../store/slices/saas/companySlice";
 import CompanyContactInfoStep from "./CompanyContactInfoStep";
 import AddonsStep from "./AddonsStep";
 import PlanSettingsStep from "./PlanSettingsStep";
+import BranchStep from "./BranchStep";
 import CompanyPaymentStep from "./CompanyPaymentStep";
+import api from "../../../../api/axios";
 
-const steps = ["Company & Contact Details", "Plan Settings", "Add-ons", "Payment"];
+const steps = ["Company & Contact Details", "Branch Details", "Plan Settings", "Add-ons", "Payment"];
 
 export default function CompanyFormStepper() {
   const dispatch = useDispatch();
@@ -75,6 +77,14 @@ export default function CompanyFormStepper() {
       },
       plan: companyDetails.plan || null,
       selectedAddons: companyDetails.selectedAddons || {},
+      // Prefill branch defaults from company
+      branchCompanyName: companyDetails.name || "",
+      branchName: companyDetails.name || "",
+      branchAddress: companyDetails.contact?.address || "",
+      branchPhone: companyDetails.contact?.phone || "",
+      branchEmail: companyDetails.contact?.email || "",
+      branchGstn: companyDetails.gstNo || companyDetails.gst || "",
+      branchPan: companyDetails.panNo || "",
     });
   }, [id, companyDetails]);
 
@@ -128,6 +138,51 @@ export default function CompanyFormStepper() {
 
     // Steps 1-2: Update draft
     if (activeStep > 0 && activeStep < steps.length - 1) {
+      // If Branch step (index 1) then create branch before proceeding
+      if (activeStep === 1) {
+        // create branch only once per company creation
+        if (form.branchCreated) {
+          setActiveStep((s) => s + 1);
+          return;
+        }
+
+        if (form._id && form.branchName) {
+          const payload = {
+            companyId: form._id,
+            code: form.branchCode || '',
+            companyName: form.branchCompanyName || form.name || '',
+            name: form.branchName || '',
+            tagline: form.branchTagline || '',
+            address: form.branchAddress || '',
+            logo: form.branchLogo || '',
+            phone: form.branchPhone || '',
+            phone2: form.branchPhone2 || '',
+            email: form.branchEmail || '',
+            gstn: form.branchGstn || '',
+            pan: form.branchPan || '',
+            status: form.branchStatus || 'active',
+            contactInfo: form.branchContactInfo || '',
+            contactPerson: {
+              name: form.contact?.personName || '',
+              email: form.contact?.email || '',
+              phone: form.contact?.phone || '',
+            },
+          };
+
+          try {
+            await api.post('/saas/branch', payload);
+            // mark branch created to avoid duplicate creates
+            setForm((f) => ({ ...f, branchCreated: true }));
+          } catch (err) {
+            console.error('Failed to create branch from stepper', err);
+          }
+        }
+        // proceed to next step
+        setActiveStep((s) => s + 1);
+        return;
+      }
+
+      // For other intermediate steps (plan/addons), update company as before
       if (form._id) {
         await dispatch(
           updateCompany({
@@ -161,10 +216,12 @@ export default function CompanyFormStepper() {
       case 0:
         return <CompanyContactInfoStep form={form} handleChange={handleChange} />;
       case 1:
-        return <PlanSettingsStep form={form} handleChange={handleChange} />;
+        return <BranchStep form={form} handleChange={handleChange} />;
       case 2:
-        return <AddonsStep form={form} handleChange={handleChange} />;
+        return <PlanSettingsStep form={form} handleChange={handleChange} />;
       case 3:
+        return <AddonsStep form={form} handleChange={handleChange} />;
+      case 4:
         return (
           <CompanyPaymentStep
             form={form}
@@ -206,9 +263,7 @@ export default function CompanyFormStepper() {
       console.log("📦 Payment Payload:", payload);
 
       const action = await dispatch(signupCompany(payload));
-      const res = action.payload;
-
-      if (res) {
+      if (action.payload) {
         navigate("/companies");
       }
     } catch (err) {
@@ -219,23 +274,7 @@ export default function CompanyFormStepper() {
     }
   };
 
-  // Build addons array helper
-  const buildAddonsArray = () => {
-    if (!form.selectedAddons || typeof form.selectedAddons !== "object") {
-      return [];
-    }
-    
-    // This is a simplified version - get addon details in the actual implementation
-    const addonsArray = [];
-    Object.keys(form.selectedAddons).forEach((addonValue) => {
-      addonsArray.push({
-        value: addonValue,
-        qty: form.selectedAddons[addonValue]
-      });
-    });
-    
-    return addonsArray;
-  };
+  // buildAddonsArray removed — CompanyPaymentStep computes its own addon array
 
   return (
     <Box>

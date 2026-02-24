@@ -18,6 +18,9 @@ import {
 import api from "../../../api/axios";
 
 export default function CashPaymentDialog({ open, company, onClose, onSuccess }) {
+  // support both shapes: { _id, name, ... } or { company: { _id, name }, plan, ... }
+  const currentCompany = company?.company || company || null;
+  const currentPlan = company?.plan || null;
   const [cashReceiptNo, setCashReceiptNo] = useState("");
   const [orders, setOrders] = useState([]);
   const [selectedOrderId, setSelectedOrderId] = useState("");
@@ -28,23 +31,34 @@ export default function CashPaymentDialog({ open, company, onClose, onSuccess })
 
   // Fetch orders for the company when dialog opens
   useEffect(() => {
-    if (open && company?._id) {
+    console.log("CashPaymentDialog open:", open, "companyId:", currentCompany?._id);
+    if (open && currentCompany?._id) {
       fetchOrders();
     }
-  }, [open, company?._id]);
+  }, [open, currentCompany?._id]);
+
+  // Generate a reasonably-unique cash receipt number when dialog opens
+  useEffect(() => {
+    if (!open) return;
+    const gen = () => {
+      const d = new Date();
+      const datePart = d.toISOString().slice(0,10).replace(/-/g,'');
+      const rnd = Math.floor(Math.random() * 900000) + 100000; // 6 digits
+      return `CASH-${datePart}-${rnd}`;
+    };
+    setCashReceiptNo(gen());
+  }, [open]);
 
   const fetchOrders = async () => {
     try {
       setFetchingOrders(true);
       const response = await api.get(`/saas/order`, {
         params: {
-          companyId: company._id,
-          // Filter for unpaid/partial orders
-          // (This is ORDER payment status, NOT company subscription status)
-          // Backend maps "partial" -> "partially_paid"
-          status: ["pending", "partial"],
-          limit: 100,
-        },
+            companyId: currentCompany._id,
+            // Filter for unpaid/partial orders (use actual DB status keys)
+            status: ["partially_paid", "pending"],
+            limit: 100,
+          },
       });
       const orderList = Array.isArray(response.data)
         ? response.data
@@ -79,7 +93,7 @@ export default function CashPaymentDialog({ open, company, onClose, onSuccess })
       setLoading(true);
 
       const response = await api.post(
-        `/saas/company/${company._id}/record-cash-payment`,
+        `/saas/company/${currentCompany._id}/record-cash-payment`,
         {
           orderId: selectedOrderId,
           cashReceiptNo: cashReceiptNo.trim(),
@@ -125,19 +139,19 @@ export default function CashPaymentDialog({ open, company, onClose, onSuccess })
           <Typography variant="body2" color="textSecondary" mb={0.5}>
             Company
           </Typography>
-          <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
-            {company?.name}
+            <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
+            {currentCompany?.name}
           </Typography>
         </Box>
 
         {/* Plan Info */}
-        {company?.plan && (
+        {currentPlan && (
           <Box mb={2}>
             <Typography variant="body2" color="textSecondary" mb={0.5}>
               Plan
             </Typography>
             <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
-              {company.plan.name}
+              {currentPlan?.planSnapshot?.name || currentPlan?.planSnapshot?.code || currentPlan?.name || currentPlan}
             </Typography>
           </Box>
         )}
@@ -174,12 +188,14 @@ export default function CashPaymentDialog({ open, company, onClose, onSuccess })
               disabled={loading}
               label="Select Order"
             >
-              {orders.map((order) => (
-                <MenuItem key={order._id} value={order._id}>
-                  Order #{order.orderNo || order._id.slice(-6)} - ₹
-                  {(order.finalAmountPaise / 100).toFixed(2)}
-                </MenuItem>
-              ))}
+              {orders.map((order) => {
+                const amountDuePaise = (order.final?.amountDuePaise ?? order.finalAmountPaise ?? (order.totals?.totalPayablePaise - (order.final?.totalPaidPaise || 0))) || 0;
+                return (
+                  <MenuItem key={order._id} value={order._id}>
+                    Order #{order.orderNo || order._id.slice(-6)} - ₹{(amountDuePaise/100).toFixed(2)}
+                  </MenuItem>
+                );
+              })}
             </Select>
           </FormControl>
         )}

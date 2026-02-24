@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState } from "react";
+﻿import React, { useEffect } from "react";
 import { Box, Paper, Button, TextField, FormControlLabel, Switch } from "@mui/material";
 import { useFormik } from "formik";
 import * as yup from "yup";
@@ -11,7 +11,7 @@ export default function DepartmentForm() {
   const { id } = useParams();
   const isNew = !id;
   const nav = useNavigate();
-  const [admins, setAdmins] = useState([]);
+  
 
   // useEffect(() => {
   //   api.get("/users").then((r) => setAdmins(r.data)).catch(() => {});

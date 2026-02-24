@@ -6,7 +6,7 @@ export default React.memo(function PermissionMatrix({ permissions = [], value = 
   const grouped = useMemo(() => {
     const map = {};
     permissions.forEach(p => {
-      const [module, action] = p.split(".");
+      const [module] = p.split(".");
       if (!map[module]) map[module] = [];
       map[module].push(p);
     });

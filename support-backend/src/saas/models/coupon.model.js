@@ -24,14 +24,14 @@ const CouponSchema = new Schema({
   // maxUses: { type: Number, default: 0 }, // 0 = unlimited
   // ADDED V2
   isActive: Boolean,
-  appliesTo: { type: String, enum: ['PLAN','ADDON','ALL'], default: 'PLAN' },
+  appliesTo: { type: String, enum: ['PLAN','ADDON','ALL'], default: 'ALL' },
   maxUses: { type: Number, default: null }, //0= Unlimited use
     // per-company usage map: { '<companyId>': Number }
   // usagePerCompany: { type: Schema.Types.Mixed, default: {} },
   // maxUsagePerCompany: { type: Number, default: null },
 
   // ADDED V1
-  eligiblePlanCodes: [String], // restrict to specific plans if needed
+  eligiblePlanCodes: [String], // restrict to specific plans if needed -[] means apply to all 
 
 }, { timestamps: true });
 

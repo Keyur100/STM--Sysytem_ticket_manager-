@@ -6,8 +6,11 @@
   "scripts": {
     "start": "node src/server.js",
     "seed": "node src/seed/initialData.js",
+    "saas:seed": "node src/saas/seed/index.js",
     "start:workers": "pm2 start pm2.worker.config.js",
-    "dev": "nodemon src/server.js"
+    "hard-delete-worker": "node src/saas/workers/hardDeleteWorker.js",
+    "dev": "nodemon src/server.js",
+    "lint": "eslint src --ext .js"
   },
   "dependencies": {
     "bcrypt": "^5.1.0",

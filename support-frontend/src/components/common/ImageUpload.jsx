@@ -4,7 +4,7 @@ import { Box, Button, Avatar } from "@mui/material";
 // This component returns the file object to parent if signed flow is not implemented.
 export default function ImageUpload({ value, onComplete }) {
   const fileRef = useRef();
-  const [busy, setBusy] = useState(false);
+  const [busy] = useState(false);
 
   async function handleFile(f) {
     if (!f) return;

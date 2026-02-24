@@ -4,211 +4,178 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  TextField,
   Button,
   Box,
-  FormControlLabel,
-  Checkbox,
   CircularProgress,
   Alert,
-  MenuItem,
-  Card,
-  CardContent,
-  Typography,
+  Stepper,
+  Step,
+  StepLabel,
 } from "@mui/material";
-import api from "../../../api/api";
+import api from "../../../api/axios";
+import PlanSettingsStep from "../company/CompanyFormStepper/PlanSettingsStep";
+import AddonsStep from "../company/CompanyFormStepper/AddonsStep";
+import CompanyPaymentStep from "../company/CompanyFormStepper/CompanyPaymentStep";
+
+const steps = ["Plan Settings", "Add-ons", "Payment"];
 
 export default function UpgradeDialog({ open, subscription, company, onClose, onSuccess }) {
-  const [newPlanId, setNewPlanId] = useState("");
-  const [couponCode, setCouponCode] = useState("");
-  const [useWallet, setUseWallet] = useState(false);
-  const [plans, setPlans] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [fetchingPlans, setFetchingPlans] = useState(false);
-  const [error, setError] = useState("");
-  const [preview, setPreview] = useState(null);
+  const [activeStep, setActiveStep] = useState(0);
+  const [form, setForm] = useState({
+    _id: company?._id || null,
+    plan: null,
+    selectedAddons: company?.selectedAddons || {},
+  });
 
-  // Fetch available plans
+  const [plans, setPlans] = useState([]);
+  const [loadingPlans, setLoadingPlans] = useState(false);
+  const [loadingAction, setLoadingAction] = useState(false);
+  const [error, setError] = useState("");
+  const [paymentData, setPaymentData] = useState(null);
+
   useEffect(() => {
-    if (open && subscription) {
-      fetchPlans();
-    }
+    if (open && subscription) fetchPlans();
+    // prefill current plan snapshot if available
+    setForm((f) => ({ ...f, plan: subscription?.planSnapshot || null }));
   }, [open, subscription]);
 
   const fetchPlans = async () => {
     try {
-      setFetchingPlans(true);
-      const response = await api.get("/saas/plans");
-      // Filter only plans more expensive than current
-      const filtered = response.data.data.filter(
-        (p) => p.pricePaise > subscription.planSnapshot?.pricePaise
+      setLoadingPlans(true);
+      const res = await api.get("/saas/plan");
+      const payload = res?.data ?? res?.plans ?? res?.items ?? res ?? [];
+      const plansList = Array.isArray(payload) ? payload : payload.items || payload.data || [];
+      const filtered = (plansList || []).filter(
+        (p) => (p.pricePaise || p.price || 0) > (subscription?.planSnapshot?.pricePaise || 0)
       );
       setPlans(filtered);
-    } catch (err) {
+    } catch {
       setError("Failed to fetch plans");
     } finally {
-      setFetchingPlans(false);
+      setLoadingPlans(false);
     }
   };
 
-  const handleUpgrade = async () => {
-    try {
-      if (!newPlanId) {
-        setError("Please select a plan to upgrade to");
-        return;
-      }
-
-      setLoading(true);
-      setError("");
-
-      const response = await api.post(
-        `/saas/subscriptions/${subscription._id}/upgrade`,
-        {
-          newPlanId,
-          couponCode: couponCode || null,
-          useWallet,
-        }
-      );
-
-      if (response.data.success) {
-        onSuccess?.();
-        handleClose();
-      }
-    } catch (err) {
-      setError(err.response?.data?.message || "Failed to upgrade subscription");
-    } finally {
-      setLoading(false);
-    }
+  const handleChange = (path, value) => {
+    setForm((prev) => {
+      const updated = { ...prev };
+      const keys = String(path).split(".");
+      let obj = updated;
+      keys.slice(0, -1).forEach((k) => {
+        if (obj[k] === undefined || obj[k] === null) obj[k] = {};
+        obj = obj[k];
+      });
+      obj[keys[keys.length - 1]] = value;
+      return updated;
+    });
   };
+
+  const handleNext = () => setActiveStep((s) => s + 1);
+  const handleBack = () => setActiveStep((s) => Math.max(0, s - 1));
 
   const handleClose = () => {
-    setNewPlanId("");
-    setCouponCode("");
-    setUseWallet(false);
+    setActiveStep(0);
+    setForm({
+      _id: company?._id || null,
+      plan: subscription?.planSnapshot || null,
+      selectedAddons: company?.selectedAddons || {},
+    });
+    setPaymentData(null);
     setError("");
-    setPreview(null);
     onClose();
   };
 
-  const selectedPlan = plans.find((p) => p._id === newPlanId);
+  const handleFinishUpgrade = async () => {
+    if (!form.plan || !form.plan._id) {
+      setError("Please select a target plan before upgrading.");
+      return;
+    }
+
+    try {
+      setLoadingAction(true);
+      setError("");
+
+      const payload = {
+        newPlanId: form.plan._id,
+        couponCode: paymentData?.couponCode || null,
+        useWallet: paymentData?.useWallet || false,
+      };
+
+      const res = await api.post(`/subscriptions/${subscription._id}/upgrade`, payload);
+      // api returns already-unwrapped response object { success, message, data }
+      if (res && res.success) {
+        onSuccess?.();
+        handleClose();
+      } else {
+        setError(res?.message || "Upgrade failed");
+      }
+    } catch (err) {
+      setError(err.response?.data?.message || err.message || "Upgrade failed");
+    } finally {
+      setLoadingAction(false);
+    }
+  };
+
+  const renderStepContent = (step) => {
+    switch (step) {
+      case 0:
+        return (
+          <PlanSettingsStep
+            form={form}
+            handleChange={handleChange}
+            plansOverride={plans}
+          />
+        );
+      case 1:
+        return <AddonsStep form={form} handleChange={handleChange} />;
+      case 2:
+        return (
+          <CompanyPaymentStep
+            form={form}
+            onUpdate={(updatedForm) => setForm((f) => ({ ...f, ...updatedForm }))}
+            onSignedUp={() => onSuccess?.()}
+            onPaymentReady={setPaymentData}
+          />
+        );
+      default:
+        return null;
+    }
+  };
 
   if (!subscription) return null;
 
   return (
-    <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
+    <Dialog open={open} onClose={handleClose} maxWidth="md" fullWidth>
       <DialogTitle>Upgrade Subscription</DialogTitle>
 
       <DialogContent sx={{ mt: 2 }}>
-        {/* Current Plan Info */}
-        <Card sx={{ mb: 3, bgcolor: "background.paper" }}>
-          <CardContent>
-            <Typography variant="subtitle2" color="textSecondary">
-              Current Plan
-            </Typography>
-            <Typography variant="h6">
-              {subscription.planSnapshot?.name}
-            </Typography>
-            <Typography variant="body2" color="textSecondary">
-              ₹ {(subscription.planSnapshot?.pricePaise / 100).toFixed(2)}/month
-            </Typography>
-          </CardContent>
-        </Card>
+        <Box sx={{ mb: 2 }}>
+          <strong>Current Plan:</strong> {subscription.planSnapshot?.name} — ₹{((subscription.planSnapshot?.pricePaise||0)/100).toFixed(2)}
+        </Box>
 
-        {/* Plan Selection */}
-        <TextField
-          select
-          fullWidth
-          label="Select Plan to Upgrade To"
-          value={newPlanId}
-          onChange={(e) => setNewPlanId(e.target.value)}
-          disabled={fetchingPlans || loading}
-          sx={{ mb: 2 }}
-        >
-          {plans.length === 0 ? (
-            <MenuItem disabled>No higher plans available</MenuItem>
-          ) : (
-            plans.map((plan) => (
-              <MenuItem key={plan._id} value={plan._id}>
-                {plan.name} - ₹{(plan.pricePaise / 100).toFixed(2)}/month
-              </MenuItem>
-            ))
-          )}
-        </TextField>
+        <Stepper activeStep={activeStep} alternativeLabel>
+          {steps.map((label) => (
+            <Step key={label}><StepLabel>{label}</StepLabel></Step>
+          ))}
+        </Stepper>
 
-        {/* Coupon Code */}
-        <TextField
-          fullWidth
-          label="Coupon Code (Optional)"
-          value={couponCode}
-          onChange={(e) => setCouponCode(e.target.value)}
-          placeholder="Enter promo code"
-          disabled={loading}
-          sx={{ mb: 2 }}
-        />
-
-        {/* Wallet Checkbox */}
-        <FormControlLabel
-          control={
-            <Checkbox
-              checked={useWallet}
-              onChange={(e) => setUseWallet(e.target.checked)}
-              disabled={loading}
-            />
-          }
-          label="Use wallet balance for payment"
-          sx={{ mb: 2 }}
-        />
+        <Box mt={3}>{renderStepContent(activeStep)}</Box>
 
         {error && (
-          <Alert severity="error" sx={{ mb: 2 }}>
-            {error}
-          </Alert>
-        )}
-
-        {/* Price Preview */}
-        {selectedPlan && (
-          <Card sx={{ bgcolor: "action.hover" }}>
-            <CardContent>
-              <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                Upgrade Summary
-              </Typography>
-              <Box sx={{ display: "flex", justifyContent: "space-between", mb: 1 }}>
-                <Typography variant="body2">New Plan Price:</Typography>
-                <Typography variant="body2">
-                  ₹{(selectedPlan.pricePaise / 100).toFixed(2)}
-                </Typography>
-              </Box>
-              <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-                <Typography variant="body2" fontWeight="bold">
-                  Amount Due:
-                </Typography>
-                <Typography variant="body2" fontWeight="bold">
-                  (Calculated after payment)
-                </Typography>
-              </Box>
-            </CardContent>
-          </Card>
+          <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>
         )}
       </DialogContent>
 
       <DialogActions>
-        <Button onClick={handleClose} disabled={loading}>
-          Cancel
-        </Button>
-        <Button
-          onClick={handleUpgrade}
-          variant="contained"
-          disabled={!newPlanId || loading || fetchingPlans}
-        >
-          {loading ? (
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-              <CircularProgress size={20} color="inherit" />
-              Upgrading...
-            </Box>
-          ) : (
-            "Upgrade Plan"
-          )}
-        </Button>
+        <Button onClick={handleClose} disabled={loadingAction}>Cancel</Button>
+        {activeStep > 0 && <Button onClick={handleBack}>Back</Button>}
+        {activeStep < steps.length - 1 ? (
+          <Button variant="contained" onClick={handleNext} disabled={loadingPlans}>{loadingPlans ? <CircularProgress size={18} /> : "Next"}</Button>
+        ) : (
+          <Button variant="contained" color="primary" onClick={handleFinishUpgrade} disabled={loadingAction}>
+            {loadingAction ? <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}><CircularProgress size={18} />Upgrading...</Box> : "Upgrade Plan"}
+          </Button>
+        )}
       </DialogActions>
     </Dialog>
   );

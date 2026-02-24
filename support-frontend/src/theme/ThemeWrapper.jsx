@@ -1,9 +1,8 @@
 ﻿import React from "react";
 import { createTheme, ThemeProvider, CssBaseline } from "@mui/material";
-import { useSelector, useDispatch } from "react-redux";
-import { setTheme } from "../store/slices/uiSlice";
+import { useSelector } from "react-redux";
 
-export function getTheme(mode = "light") {
+function getTheme(mode = "light") {
   return createTheme({
     palette: { mode },
     components: { MuiButton: { defaultProps: { disableElevation: true } } }

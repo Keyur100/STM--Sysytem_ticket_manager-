@@ -36,7 +36,7 @@ const OrderStatus = {
 
 const BillingCycle = { MONTHLY: 'MONTHLY', YEARLY: 'YEARLY' };
 
-const CouponType = { PERCENT: 'PERCENT', FIXED: 'FIXED' };
+const CouponType = { PERCENT: 'percentage', FIXED: 'fixed' };
 
 const MetricsMap = {
   USER: 'max_employees',

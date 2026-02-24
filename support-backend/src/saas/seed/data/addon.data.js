@@ -9,7 +9,7 @@ const addonData = [
     description: "Add additional employees to your plan",
     pricePaise: 50000, // ₹500
     hasTax: true,
-    taxIncluded: false,
+    taxIncluded: true,
     taxName: "GST",
     isSystem: true,
     isActive: true,
@@ -21,7 +21,7 @@ const addonData = [
     description: "Add additional branch to your plan",
     pricePaise: 50000, // ₹500
     hasTax: true,
-    taxIncluded: false,
+    taxIncluded: true,
     taxName: "GST",
     isSystem: true,
     isActive: true,
@@ -33,7 +33,7 @@ const addonData = [
     description: "Add additional reseller to your plan",
     pricePaise: 50000, // ₹500
     hasTax: true,
-    taxIncluded: false,
+    taxIncluded: true,
     taxName: "GST",
     isSystem: true,
     isActive: true,
@@ -45,7 +45,7 @@ const addonData = [
     description: "Add additional customers to your plan",
     pricePaise: 50000, // ₹500
     hasTax: true,
-    taxIncluded: false,
+    taxIncluded: true,
     taxName: "GST",
     isSystem: true,
     isActive: true,
@@ -57,7 +57,7 @@ const addonData = [
     description: "Add additional suppliers to your plan",
     pricePaise: 50000, // ₹500
     hasTax: true,
-    taxIncluded: false,
+    taxIncluded: true,
     taxName: "GST",
     isSystem: true,
     isActive: true,
@@ -69,7 +69,7 @@ const addonData = [
     description: "Add storage to your account",
     pricePaise: 30000, 
     hasTax: true,
-    taxIncluded: false,
+    taxIncluded: true,
     taxName: "GST",
     isSystem: true,
     isActive: true,
@@ -84,7 +84,7 @@ module.exports = addonData;
 //     description: "Unlimited API calls with advanced features",
 //     pricePaise: 149900, // ₹1499
 //     hasTax: true,
-//     taxIncluded: false,
+//     taxIncluded: true,
 //     taxName: "GST",
 //     isSystem: true,
 //     isActive: true,
@@ -96,7 +96,7 @@ module.exports = addonData;
 //     description: "White label your instance with custom branding",
 //     pricePaise: 299900, // ₹2999
 //     hasTax: true,
-//     taxIncluded: false,
+//     taxIncluded: true,
 //     taxName: "GST",
 //     isSystem: true,
 //     isActive: true,
@@ -108,7 +108,7 @@ module.exports = addonData;
 //     description: "Enable Single Sign-On (SSO) for your organization",
 //     pricePaise: 79900, // ₹799
 //     hasTax: true,
-//     taxIncluded: false,
+//     taxIncluded: true,
 //     taxName: "GST",
 //     isSystem: true,
 //     isActive: true,
@@ -120,7 +120,7 @@ module.exports = addonData;
 //     description: "Get detailed analytics and insights for your business",
 //     pricePaise: 129900, // ₹1299
 //     hasTax: true,
-//     taxIncluded: false,
+//     taxIncluded: true,
 //     taxName: "GST",
 //     isSystem: true,
 //     isActive: true,

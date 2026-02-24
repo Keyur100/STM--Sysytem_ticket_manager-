@@ -1,0 +1,106 @@
+# version: "3.8"
+
+# services:
+#   mongo:
+#     image: mongo:7.0       
+#     container_name: mongo
+#     ports:
+#       - "27018:27017"       # Host 27018 → Container 27017 (remove while push to docker hub)
+#     restart: unless-stopped
+#     volumes:
+#       - mongo_data:/data/db
+#     networks:
+#       - app-network
+
+#   redis:
+#     image: redis:7-alpine
+#     container_name: redis
+#     restart: unless-stopped
+#     command: ["redis-server", "--appendonly", "yes"]
+#     volumes:
+#       - redis_data:/data
+#     networks:
+#       - app-network
+
+#   backend:
+#     build: ./support-backend
+#     container_name: backend
+#     env_file:
+#       - ./support-backend/.env.production
+#     depends_on:
+#       - mongo
+#       - redis
+#     restart: unless-stopped
+#     networks:
+#       - app-network
+
+#   frontend:
+#     build: ./support-frontend
+#     container_name: frontend
+#     depends_on:
+#       - backend
+#     ports:
+#       - "5173:80"
+#     restart: unless-stopped
+#     networks:
+#       - app-network
+
+# volumes:
+#   mongo_data:
+#   redis_data:
+
+# networks:
+#   app-network:
+#     driver: bridge
+services:
+  mongo:
+    image: mongo:7.0
+    container_name: mongo
+    # ports:
+    #   - "27018:27017"       # Host 27018 → Container 27017 (remove while push to docker hub)
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - app-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - app-network
+
+  backend:
+    image: keyurp0207/support-backend:latest   # ✅ From Docker Hub
+    container_name: backend
+    env_file:
+      - .env.production                        # ✅ Local file on server
+    depends_on:
+      - mongo
+      - redis
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  frontend:
+    image: keyurp0207/support-frontend:latest  # ✅ From Docker Hub
+    container_name: frontend
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"                                # ✅ Production standard
+    restart: unless-stopped
+    networks:
+      - app-network
+
+volumes:
+  mongo_data:
+  redis_data:
+
+networks:
+  app-network:
+    driver: bridge

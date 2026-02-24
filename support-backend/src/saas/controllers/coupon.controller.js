@@ -22,7 +22,7 @@ exports.getAll = async (req, res) => {
 
 exports.getAllCoupon = async (req, res) => {
   try {
-    const data = await CouponService.find({});
+    const data = await CouponService.getAll({});
     return sendSuccess(res, data, "Coupons fetched successfully");
   } catch (error) {
     console.error("Error fetching coupons:", error);
@@ -49,5 +49,11 @@ exports.remove = async (req, res) => {
 exports.applyCoupon = async (req, res) => {
   const { code, planCode, amountPaise } = req.body;
   const result = await CouponService.validateAndApply(code, planCode, amountPaise);
+  // Increment usage when coupon is actually applied via API
+  try {
+    await CouponService.incrementUsage(result.coupon.code);
+  } catch (e) {
+    console.error('Failed to increment coupon usage:', e);
+  }
   return sendSuccess(res, result, "Coupon applied successfully");
 };

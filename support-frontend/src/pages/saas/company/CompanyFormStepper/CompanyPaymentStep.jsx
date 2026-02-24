@@ -20,22 +20,18 @@ import {
   DialogActions,
   Snackbar,
 } from "@mui/material";
-import { useDispatch } from "react-redux";
 import api from "../../../../api/axios";
 import Loader from "../../../../components/common/Loader";
 import CouponModal from "./CouponModal";
-import { signupCompany, updateCompany } from "../../../../store/slices/saas/companySlice";
-
-export default function CompanyPaymentStep({ form, onUpdate, onSignedUp, onPaymentReady }) {
-  const dispatch = useDispatch();
+export default function CompanyPaymentStep({ form, onPaymentReady }) {
   const theme = useTheme();
   const [walletBalance, setWalletBalance] = useState(0);
   const [couponCode, setCouponCode] = useState("");
   const [discountAmount, setDiscountAmount] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState("RAZORPAY");
   const [useWallet, setUseWallet] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [alertMsg, setAlertMsg] = useState(null);
+  const [, setLoading] = useState(false);
+  const [, setAlertMsg] = useState(null);
   const [couponModalOpen, setCouponModalOpen] = useState(false);
   const [addonsData, setAddonsData] = useState([]);
   const [walletDialogOpen, setWalletDialogOpen] = useState(false);
@@ -44,7 +40,6 @@ export default function CompanyPaymentStep({ form, onUpdate, onSignedUp, onPayme
   const [snackbar, setSnackbar] = useState({ open: false, message: "", severity: "success" });
 
   const plan = form.plan;
-
   // Fetch add-ons to calculate totals
   useEffect(() => {
     const fetchAddons = async () => {
@@ -148,13 +143,65 @@ export default function CompanyPaymentStep({ form, onUpdate, onSignedUp, onPayme
   const addonsTotal = calculateAddonsTotal();
   const subtotal = planPrice + addonsTotal;
   const totalAfterDiscount = Math.max(subtotal - discountAmount, 0);
-  
-  // ✅ Tax calculation (18% GST if plan.hasTax = true)
-  const taxPercentage = plan?.hasTax ? 18 : 0;
-  const taxableAmount = totalAfterDiscount;
-  const taxAmount = taxPercentage > 0 ? (taxableAmount * taxPercentage) / 100 : 0;
-  
-  const totalWithTax = totalAfterDiscount + taxAmount;
+  // ✅ Tax calculation respecting taxIncluded per item
+  const TAX_PERCENT = 18;
+  // build items in paise to avoid rounding issues
+  const planPricePaise = plan?.pricePaise || 0;
+  const addonsTotalPaise = (() => {
+    let sum = 0;
+    Object.keys(form.selectedAddons || {}).forEach((addonValue) => {
+      const addon = addonsData.find(a => a.value === addonValue);
+      if (addon) {
+        const qty = form.selectedAddons[addonValue] || 0;
+        sum += (addon.pricePaise || 0) * qty;
+      }
+    });
+    return sum;
+  })();
+
+  const subtotalPaise = planPricePaise + addonsTotalPaise;
+  const discountPaise = Math.round((discountAmount || 0) * 100);
+
+  // compute tax from items where tax is included and tax to add for tax-not-included items
+  let taxFromIncludedPaise = 0;
+  let taxBaseExcludedPaise = 0;
+
+  // plan
+  if (plan?.hasTax) {
+    if (plan?.taxIncluded) {
+      taxFromIncludedPaise += Math.round((planPricePaise * TAX_PERCENT) / (100+TAX_PERCENT));
+    } else {
+      taxBaseExcludedPaise += planPricePaise;
+    }
+  }
+
+  // addons
+  Object.keys(form.selectedAddons || {}).forEach((addonValue) => {
+    const addon = addonsData.find(a => a.value === addonValue);
+    if (!addon) return;
+    const qty = form.selectedAddons[addonValue] || 0;
+    const linePaise = (addon.pricePaise || 0) * qty;
+    if (addon.hasTax) {
+      if (addon.taxIncluded) {
+        taxFromIncludedPaise += Math.round((linePaise * TAX_PERCENT) / (100+TAX_PERCENT));
+      } else {
+        taxBaseExcludedPaise += linePaise;
+      }
+    }
+  });
+
+  // Allocate discount to excluded base first (reduces taxable excluded base)
+  const discountConsumedOnExcluded = Math.min(discountPaise, taxBaseExcludedPaise);
+  const remainingExcludedBase = Math.max(0, taxBaseExcludedPaise - discountConsumedOnExcluded);
+
+  // tax on excluded base after discount consumed against it
+  const taxOnExcludedPaise = Math.round(remainingExcludedBase * (TAX_PERCENT / 100));
+
+  // total tax for display = included portion + added portion
+
+  // total payable: subtotal - discount + ONLY tax on excluded base (included tax is already part of subtotal)
+  const totalWithTaxPaise = Math.max(0, subtotalPaise - discountPaise + taxOnExcludedPaise);
+  const totalWithTax = totalWithTaxPaise / 100;
   const walletAppliedAmount = useWallet ? Math.min(walletBalance, totalWithTax) : 0;
   const finalPayable = totalWithTax - walletAppliedAmount;
 
@@ -402,11 +449,18 @@ export default function CompanyPaymentStep({ form, onUpdate, onSignedUp, onPayme
 
           {/* Tax Calculation */}
           {plan?.hasTax && (
-            <Box sx={{ display: "flex", justifyContent: "space-between", mb: 1.5, backgroundColor: "action.selected", p: 1, borderRadius: 1 }}>
-              <Typography fontWeight={500}>🧾 {plan?.taxName || "GST"} (18%):</Typography>
-              <Typography fontWeight={600} color="warning.main">
-                +₹{taxAmount.toFixed(2)}
-              </Typography>
+            <Box sx={{ mb: 1.5 }}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', p: 1, borderRadius: 1, backgroundColor: theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.03)' : 'action.selected' }}>
+                <Typography fontWeight={500}>🧾 {plan?.taxName || "GST"} (18%):</Typography>
+                <Box sx={{ textAlign: 'right' }}>
+                  {taxFromIncludedPaise > 0 && (
+                    <Typography variant="body2" sx={{ color: theme.palette.mode === 'dark' ? 'text.secondary' : 'text.secondary' }}>Included: ₹{(taxFromIncludedPaise/100).toFixed(2)}</Typography>
+                  )}
+                  {taxOnExcludedPaise > 0 && (
+                    <Typography fontWeight={600} sx={{ color: theme.palette.warning.main }}>+₹{(taxOnExcludedPaise/100).toFixed(2)}</Typography>
+                  )}
+                </Box>
+              </Box>
             </Box>
           )}
 

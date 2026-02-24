@@ -7,7 +7,7 @@ module.exports = {
   env,
   CouponType: {
     PERCENT: 'percentage',
-    FIXED: 'flat'
+    FIXED: 'fixed'
   },
   CouponStatus: {
     ACTIVE: 'ACTIVE',

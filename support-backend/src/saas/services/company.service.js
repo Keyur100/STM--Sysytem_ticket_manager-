@@ -18,6 +18,9 @@ const mongoose = require("mongoose");
 const PlanService = require("./plan.service");
 const couponModel = require("../models/coupon.model");
 const addonModel = require("../models/addon.model");
+const { CouponType } = require("../constants/coupon.constant");
+const branchModel = require('../models/branch.model');
+const clientUserModel = require('../models/clientUser.model');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -209,6 +212,7 @@ class CompanyService {
       createdBy,
       updatedBy: createdBy,
       activeSubscriptionId: null,
+      planSnapshot:payload?.plan || null,
     });
     //  SAFE CHECK (idempotent)
     let wallet = await walletModel.findOne({ company: company._id });
@@ -261,24 +265,29 @@ class CompanyService {
   ========================= */
   const company = await Company.findById(companyId);
   if (!company) throw new Error("Company not found");
-
-  const plan = await planModel.findById(planData._id);
-  if (!plan) throw new Error("Plan not found");
+  // Prefer plan snapshot supplied in payload; fallback to canonical plan doc.
+  let planDoc = null;
+  if (planData && planData.planSnapshot) {
+    planDoc = planData.planSnapshot;
+  } else if (planData && planData._id) {
+    planDoc = await planModel.findById(planData._id).lean();
+  }
+  if (!planDoc) throw new Error("Plan not found");
 
   /* =========================
-     BUILD ORDER ITEMS
+     BUILD ORDER ITEMS (using planDoc snapshot)
   ========================= */
   const items = [];
-  const planPricePaise = Number(plan.pricePaise || 0);
+  const planPricePaise = Number(planDoc.pricePaise || planDoc.planPricePaise || 0);
 
   items.push({
     type: "plan",
-    itemId: plan._id,
-    name: plan.name,
+    itemId: planDoc._id || planData._id || null,
+    name: planDoc.name || planDoc.planSnapshot?.name || '',
     qty: 1,
     priceAtPurchasePaise: planPricePaise,
     lineSubtotalPaise: planPricePaise,
-    taxConfig: { hasTax: plan.hasTax }
+    taxConfig: { hasTax: planDoc.hasTax || false, taxIncluded: !!planDoc.taxIncluded }
   });
 
   // ✅ Process add-ons with validation
@@ -308,13 +317,22 @@ class CompanyService {
       qty,
       priceAtPurchasePaise: price,
       lineSubtotalPaise: price * qty,
-      taxConfig: { hasTax: addon.hasTax }
+      taxConfig: { hasTax: addon.hasTax, taxIncluded: !!addon.taxIncluded }
     });
   }
 
   // If there are invalid addons, log them for debugging
   if (invalidAddons.length > 0) {
     console.log("❌ Invalid addons detected:", invalidAddons);
+  }
+
+  // Persist plan snapshot to company so future operations use this company-specific snapshot
+  try {
+    const snapshotToStore = planDoc && typeof planDoc.toObject === 'function' ? planDoc.toObject() : planDoc;
+    company.planSnapshot = snapshotToStore;
+    await company.save();
+  } catch (err) {
+    console.error('Failed to persist planSnapshot on company:', err);
   }
 
   const subtotalPaise = items.reduce((s, i) => s + i.lineSubtotalPaise, 0);
@@ -334,11 +352,11 @@ class CompanyService {
       (!coupon.validFrom || now >= coupon.validFrom) &&
       (!coupon.validTo || now <= coupon.validTo) &&
       (!coupon.minSpendPaise || subtotalPaise >= coupon.minSpendPaise) &&
-      (coupon.eligiblePlanCodes.length === 0 || coupon.eligiblePlanCodes.includes(plan.code)) &&
+      (coupon.eligiblePlanCodes.length === 0 || coupon.eligiblePlanCodes.includes(planDoc.code)) &&
       (coupon.maxUses === 0 || coupon.usedCount < coupon.maxUses)
     ) {
       let applied =
-        coupon.discountType === "percentage"
+        coupon.discountType === CouponType.PERCENT
           ? Math.floor((subtotalPaise * coupon.discountValue) / 100)
           : Number(coupon.discountValue || 0);
 
@@ -349,7 +367,7 @@ class CompanyService {
         couponId: coupon._id,
         couponCode: coupon.code,
         discountType: coupon.discountType,
-        // discountValue: coupon.discountValue,
+        discountValue: coupon.discountValue,
         discountAppliedPaise: applied
       });
 
@@ -366,18 +384,32 @@ class CompanyService {
      TAX
   ========================= */
   const taxPercent = 18;
-  let taxableAmountPaise = items
-    .filter(i => i.taxConfig?.hasTax)
-    .reduce((s, i) => s + i.lineSubtotalPaise, 0);
+  // Compute tax respecting taxIncluded flag per item
+  // Items with taxIncluded=true already have tax baked into their price.
+  // We calculate the included portion for display but DO NOT add it again on top of subtotal.
+  let taxFromIncludedPaise = 0;
+  let taxBaseExcludedPaise = 0; // base amounts which require tax on top
 
-  taxableAmountPaise = Math.max(0, taxableAmountPaise - totalDiscountPaise);
+  for (const it of items) {
+    if (!it.taxConfig?.hasTax) continue;
+    if (it.taxConfig?.taxIncluded) {
+      const taxPart = Math.round((it.lineSubtotalPaise * taxPercent) / (100+taxPercent));
+      taxFromIncludedPaise += taxPart; // for display only
+    } else {
+      taxBaseExcludedPaise += it.lineSubtotalPaise;
+    }
+  }
 
-  const totalTaxPaise = plan.hasTax //TODO plan level tax only, addons tax check?
-    ? Math.round(taxableAmountPaise * 0.18)
-    : 0;
+  // Allocate discount to excluded base first (reduces taxable base)
+  const discountConsumedOnExcluded = Math.min(totalDiscountPaise, taxBaseExcludedPaise);
+  const remainingExcludedBase = Math.max(0, taxBaseExcludedPaise - discountConsumedOnExcluded);
 
-  const totalPayablePaise =
-    subtotalPaise - totalDiscountPaise + totalTaxPaise;//TODO tax show in ui
+  const taxOnExcludedPaise = Math.round(remainingExcludedBase * (taxPercent / 100));
+
+  // For display, total tax = included portion + added portion. But payable only adds taxOnExcludedPaise.
+  const totalTaxPaiseForDisplay = taxFromIncludedPaise + taxOnExcludedPaise;
+
+  const totalPayablePaise = Math.max(0, subtotalPaise - totalDiscountPaise + taxOnExcludedPaise);
 
   /* =========================
      WALLET CALCULATION
@@ -429,18 +461,18 @@ class CompanyService {
           referenceId: "WALLET"
         }]
       : [],
-    taxBreakdown: totalTaxPaise
+    taxBreakdown: totalTaxPaiseForDisplay
       ? [{
-          taxName: plan.taxName || "GST",
+          taxName: planDoc.taxName || plan.taxName || "GST",
           percentage: taxPercent,
-          taxAmountPaise: totalTaxPaise
+          taxAmountPaise: totalTaxPaiseForDisplay
         }]
       : [],
     totals: {
       subtotalPaise,
       totalDiscountPaise,
-      taxableAmountPaise,
-      totalTaxPaise,
+      taxableAmountPaise: remainingExcludedBase,
+      totalTaxPaise: totalTaxPaiseForDisplay,
       totalPayablePaise
     },
     final: {
@@ -481,7 +513,7 @@ class CompanyService {
       orderId: order._id,
       type: "WALLET_DEBIT",
       amountPaise: walletAppliedPaise,
-      source: "PAYMENT",
+      source: "WALLET",
       description: `Wallet payment for order ${order._id}`
     });
   }
@@ -647,6 +679,8 @@ class CompanyService {
           },
           // subscription.endAt contains timestamp (ms)
           planExpiry: "$subscription.endAt",
+          // Expose plan durationDays from subscription snapshot if available
+          "plan.durationDays": { $ifNull: ["$subscription.planSnapshot.durationDays", null] },
           createdAt: 1,
         },
       },
@@ -745,6 +779,12 @@ class CompanyService {
         throw new Error("Cash receipt already recorded for this order");
       }
 
+      // 5b. Global uniqueness check: ensure the cash receipt hasn't been used elsewhere
+      const existingTx = await transactionModel.findOne({ reference: cashReceiptNo.trim() });
+      if (existingTx) {
+        throw new Error("Cash receipt already used for another payment");
+      }
+
       // 6. Validate amount due
       const amountPaise = order.final?.amountDuePaise;
       if (!amountPaise || amountPaise <= 0) {
@@ -782,7 +822,7 @@ class CompanyService {
         companyId,
         type: "CASH_PAYMENT",
         amountPaise,
-        source: "cash",
+        source: "CASH",
         reference: cashReceiptNo.trim(),
         orderId,
         description: `Cash payment recorded for order ${orderId}`,
@@ -873,7 +913,7 @@ class CompanyService {
           (!coupon.validTo || now <= coupon.validTo) &&
           (!coupon.minSpendPaise || subtotal >= coupon.minSpendPaise)
         ) {
-          let applied = coupon.discountType === "percentage"
+          let applied = coupon.discountType === CouponType.PERCENT
             ? Math.floor((subtotal * coupon.discountValue) / 100)
             : Number(coupon.discountValue || 0);
 
@@ -891,9 +931,18 @@ class CompanyService {
 
       const totalDiscount = discounts.reduce((s, d) => s + d.discountAppliedPaise, 0);
 
-      // Tax calculation
-      const taxableAmount = Math.max(0, subtotal - totalDiscount);
-      const totalTax = newPlan.hasTax ? Math.round(taxableAmount * 0.18) : 0;
+      // Tax calculation respecting taxIncluded on new plan
+      let taxableAmount = 0;
+      let taxFromIncluded = 0;
+      // If plan taxIncluded, a portion of subtotal is tax
+      if (newPlan.hasTax && newPlan.taxIncluded) {
+        taxFromIncluded = Math.round((subtotal * taxPercent) / (100+taxPercent));
+        taxableAmount = Math.max(0, subtotal - taxFromIncluded - totalDiscount);
+      } else {
+        taxableAmount = Math.max(0, subtotal - totalDiscount);
+      }
+
+      const totalTax = newPlan.hasTax ? taxFromIncluded + Math.round(taxableAmount * (taxPercent / 100)) : 0;
 
       let totalPayable = taxableAmount + totalTax - remainingValue;
       totalPayable = Math.max(0, totalPayable);
@@ -983,7 +1032,7 @@ class CompanyService {
           orderId: order._id,
           type: "WALLET_DEBIT",
           amountPaise: walletApplied,
-          source: "wallet",
+          source: "WALLET",
           description: `Wallet debit for upgrade order ${order._id}`,
           createdBy,
         });
@@ -1078,7 +1127,7 @@ class CompanyService {
           (!coupon.validTo || now <= coupon.validTo) &&
           (!coupon.minSpendPaise || subtotal >= coupon.minSpendPaise)
         ) {
-          let applied = coupon.discountType === "percentage"
+          let applied = coupon.discountType === CouponType.PERCENT
             ? Math.floor((subtotal * coupon.discountValue) / 100)
             : Number(coupon.discountValue || 0);
 
@@ -1188,7 +1237,7 @@ class CompanyService {
           orderId: order._id,
           type: "WALLET_DEBIT",
           amountPaise: walletApplied,
-          source: "wallet",
+          source: "WALLET",
           description: `Wallet debit for ${orderType} order ${order._id}`,
           createdBy,
         });
@@ -1307,6 +1356,12 @@ class CompanyService {
       // Get wallet
       const wallet = await walletModel.findOne({ companyId }).lean();
 
+      // Get branches for company
+      const branches = await require('../models/branch.model').find({ companyId }).lean().catch(() => []);
+
+      // Get client users for company
+      const clientUsers = await require('../models/clientUser.model').find({ companyId }).lean().catch(() => []);
+
       // Get active subscription with plan details
       let planData = null;
       if (company.activeSubscriptionId) {
@@ -1322,10 +1377,41 @@ class CompanyService {
           };
         }
       }
-
-      // recent orders (latest 5)
+ // recent orders (latest 5)
       const recentOrdersRaw = await orderModel.find({ companyId }).sort({ createdAt: -1 }).limit(5).lean();
 
+      // If no active subscription, try to infer plan from the latest order's plan item
+      if (!planData) {
+        const latestOrder = recentOrdersRaw && recentOrdersRaw.length ? recentOrdersRaw[0] : null;
+        if (latestOrder) {
+          const planItem = (latestOrder.items || []).find(it => it.type === 'plan');
+          if (planItem && planItem.itemId) {
+            try {
+              const planDoc = await planModel.findById(planItem.itemId).lean();
+              if (planDoc) {
+                planData = {
+                  subscriptionId: null,
+                  planSnapshot: {
+                    _id: planDoc._id,
+                    code: planDoc.code,
+                    name: planDoc.name,
+                    pricePaise: planDoc.pricePaise,
+                    billingCycle: planDoc.billingCycle,
+                  },
+                  planPricePaise: planItem.priceAtPurchasePaise || planDoc.pricePaise,
+                  status: latestOrder.status || null,
+                  endAt: null,
+                  addonSnapshot: (latestOrder.items || []).filter(i => i.type === 'addon').map(a => ({ addonId: a.itemId, name: a.name, qty: a.qty, pricePaise: a.priceAtPurchasePaise }))
+                };
+              }
+            } catch (err) {
+              console.error('Error fetching plan for latest order:', err);
+            }
+          }
+        }
+      }
+
+     
       // all orders for payment summary
       const allOrders = await orderModel.find({ companyId }).sort({ createdAt: -1 }).lean();
 
@@ -1371,78 +1457,20 @@ class CompanyService {
         })),
       };
 
-      // Build payment summary and grouped-by-method view
+      // Build compact payment totals to keep payload small
       let totalPaymentsMade = 0;
       let totalPendingAcrossOrders = 0;
-      const paymentMethodsDetailed = {};
 
-      const paymentsList = allOrders.map(order => {
-        const orderPayments = (order.payments || []).map(p => ({
-          referenceId: p.referenceId || null,
-          method: p.method || null,
-          amountPaise: p.amountPaise || 0,
-          amount: (p.amountPaise || 0) / 100,
-          status: p.status || null,
-          paidAt: p.paidAt || null,
-          orderId: order._id,
-        }));
+      for (const order of allOrders) {
+        for (const p of order.payments || []) {
+          if (p.status === 'success') totalPaymentsMade += p.amountPaise || 0;
+        }
+        totalPendingAcrossOrders += order.final?.amountDuePaise || 0;
+      }
 
-        (order.payments || []).forEach(p => {
-          const amt = p.amountPaise || 0;
-          if (p.status === 'success') totalPaymentsMade += amt;
-          const method = p.method || 'unknown';
-          if (!paymentMethodsDetailed[method]) paymentMethodsDetailed[method] = { totalAmountPaise: 0, payments: [] };
-          paymentMethodsDetailed[method].totalAmountPaise += amt;
-          paymentMethodsDetailed[method].payments.push({
-            referenceId: p.referenceId || null,
-            amountPaise: amt,
-            amount: amt / 100,
-            status: p.status || null,
-            paidAt: p.paidAt || null,
-            orderId: order._id,
-          });
-        });
-
-        const pendingForOrder = order.final?.amountDuePaise || 0;
-        totalPendingAcrossOrders += pendingForOrder;
-
-        return {
-          orderId: order._id,
-          orderNumber: order.orderNumber || null,
-          orderType: order.orderType || null,
-          status: order.status || null,
-          totals: {
-            subtotalPaise: order.totals?.subtotalPaise || 0,
-            totalDiscountPaise: order.totals?.totalDiscountPaise || 0,
-            taxableAmountPaise: order.totals?.taxableAmountPaise || 0,
-            totalTaxPaise: order.totals?.totalTaxPaise || 0,
-            totalPayablePaise: order.totals?.totalPayablePaise || 0,
-          },
-          discounts: order.discounts || [],
-          walletUsed: order.walletUsed || null,
-          taxBreakdown: order.taxBreakdown || [],
-          payments: orderPayments,
-          final: {
-            totalPaidPaise: order.final?.totalPaidPaise || 0,
-            refundedAmountPaise: order.final?.refundedAmountPaise || 0,
-            amountDuePaise: pendingForOrder,
-          },
-          createdAt: order.createdAt,
-        };
-      });
-
-      const paymentByMethod = Object.entries(paymentMethodsDetailed).map(([method, info]) => ({
-        method,
-        totalAmountPaise: info.totalAmountPaise,
-        totalAmount: info.totalAmountPaise / 100,
-        payments: info.payments,
-      }));
-
-      const paymentSummary = {
+      const paymentTotals = {
         totalPaidPaise: totalPaymentsMade,
         totalPendingPaise: totalPendingAcrossOrders,
-        payments: paymentsList,
-        paymentByMethod,
       };
 
       // Get transactions (latest 10)
@@ -1467,7 +1495,7 @@ class CompanyService {
           status: wallet.status,
         } : null,
         orderSummary,
-        paymentSummary,
+        paymentTotals,
         transactions: transactions.map(t => ({
           _id: t._id,
           type: t.type,
@@ -1477,12 +1505,248 @@ class CompanyService {
           description: t.description,
           createdAt: t.createdAt,
         })),
+        branches: branches || [],
+        clientUsers: clientUsers || [],
       };
     } catch (err) {
       console.error("Error getting company full details:", err);
       throw err;
     }
   }
+
+    // Minimal projection for sync step 1: company, branches, client users
+    static async getCompanySyncStep1Data(companyId) {
+      try {
+        const company = await Company.findById(companyId).lean();
+        if (!company) return null;
+
+        const branches = await branchModel.find({ companyId }).lean().catch(() => []);
+        const clientUsers = await clientUserModel.find({ companyId }).lean().catch(() => []);
+
+        return {
+          company: {
+            _id: company._id,
+            name: company.name,
+            code: company.code || null,
+            contact: company.contact || {},
+            email: company.contact?.email || company.email || null,
+            status: company.status,
+            createdAt: company.createdAt,
+            updatedAt: company.updatedAt,
+          },
+          branches: branches || [],
+          clientUsers: clientUsers || [],
+        };
+      } catch (err) {
+        console.error('Error in getCompanySyncStep1Data:', err);
+        throw err;
+      }
+    }
+
+    // Minimal projection for sync step 2: plan, orderSummary, transactions, wallet
+    static async getCompanySyncStep2Data(companyId) {
+      try {
+        const company = await Company.findById(companyId).lean();
+        if (!company) return null;
+
+        // Wallet
+        const wallet = await walletModel.findOne({ companyId }).lean().catch(() => null);
+
+        // Plan snapshot: active subscription or infer from latest order (without heavy fields)
+        let planData = null;
+        if (company.activeSubscriptionId) {
+          const subscription = await subscriptionModel.findById(company.activeSubscriptionId).lean();
+          if (subscription) {
+            planData = {
+              subscriptionId: subscription._id,
+              planSnapshot: subscription.planSnapshot || {},
+              planPricePaise: subscription.planPricePaise,
+              status: subscription.status,
+              endAt: subscription.endAt,
+              addonSnapshot: subscription.addonSnapshot || [],
+            };
+          }
+        }
+
+        // recent orders (latest 5)
+        const recentOrdersRaw = await orderModel.find({ companyId }).sort({ createdAt: -1 }).limit(5).lean();
+
+        // If no active subscription, try infer from latest order
+        if (!planData && recentOrdersRaw && recentOrdersRaw.length) {
+          const latestOrder = recentOrdersRaw[0];
+          const planItem = (latestOrder.items || []).find(it => it.type === 'plan');
+          if (planItem && planItem.itemId) {
+            try {
+              const planDoc = await planModel.findById(planItem.itemId).lean();
+              if (planDoc) {
+                planData = {
+                  subscriptionId: null,
+                  planSnapshot: {
+                    _id: planDoc._id,
+                    code: planDoc.code,
+                    name: planDoc.name,
+                    pricePaise: planDoc.pricePaise,
+                    billingCycle: planDoc.billingCycle,
+                  },
+                  planPricePaise: planItem.priceAtPurchasePaise || planDoc.pricePaise,
+                  status: latestOrder.status || null,
+                  endAt: null,
+                  addonSnapshot: (latestOrder.items || []).filter(i => i.type === 'addon').map(a => ({ addonId: a.itemId, name: a.name, qty: a.qty, pricePaise: a.priceAtPurchasePaise }))
+                };
+              }
+            } catch (e) {
+              console.error('Error fetching plan for latest order (step2):', e);
+            }
+          }
+        }
+
+        // all orders summary (compact)
+        const allOrders = await orderModel.find({ companyId }).sort({ createdAt: -1 }).lean();
+
+        const orderSummary = {
+          totalOrders: await orderModel.countDocuments({ companyId }),
+          recentOrders: recentOrdersRaw.map(o => ({
+            _id: o._id,
+            orderNumber: o.orderNumber || null,
+            status: o.status,
+            orderType: o.orderType || null,
+            items: (o.items || []).map(item => ({ type: item.type, itemId: item.itemId || null, name: item.name, qty: item.qty || 1, priceAtPurchasePaise: item.priceAtPurchasePaise || 0, lineSubtotalPaise: item.lineSubtotalPaise || 0 })),
+            totals: {
+              subtotalPaise: o.totals?.subtotalPaise || 0,
+              totalDiscountPaise: o.totals?.totalDiscountPaise || 0,
+              taxableAmountPaise: o.totals?.taxableAmountPaise || 0,
+              totalTaxPaise: o.totals?.totalTaxPaise || 0,
+              totalPayablePaise: o.totals?.totalPayablePaise || 0,
+            },
+            payments: (o.payments || []).map(p => ({ method: p.method, amountPaise: p.amountPaise || 0, status: p.status })),
+            final: { totalPaidPaise: o.final?.totalPaidPaise || 0, amountDuePaise: o.final?.amountDuePaise || 0 },
+            createdAt: o.createdAt,
+          })),
+        };
+
+        // transactions (latest 10)
+        const transactions = await transactionModel.find({ companyId }).sort({ createdAt: -1 }).limit(10).lean();
+
+        return {
+          company: { _id: company._id, name: company.name, email: company.contact?.email || null, status: company.status },
+          plan: planData,
+          orderSummary,
+          transactions: transactions.map(t => ({ _id: t._id, type: t.type, amountPaise: t.amountPaise, source: t.source, description: t.description, createdAt: t.createdAt })),
+          wallet: wallet ? { balancePaise: wallet.balancePaise, status: wallet.status } : null,
+        };
+      } catch (err) {
+        console.error('Error in getCompanySyncStep2Data:', err);
+        throw err;
+      }
+    }
+
+    // Minimal projection for sync step 3: modulePermissions (flattened) and company basic
+    static async getCompanySyncStep3Data(companyId) {
+      try {
+        const company = await Company.findById(companyId).lean();
+        if (!company) return null;
+
+        let planSnapshot = null;
+        if (company.activeSubscriptionId) {
+          const subscription = await subscriptionModel.findById(company.activeSubscriptionId).lean();
+          if (subscription) planSnapshot = subscription.planSnapshot || null;
+        } else {
+          // try latest order
+          const latestOrder = await orderModel.findOne({ companyId }).sort({ createdAt: -1 }).lean();
+          if (latestOrder) {
+            const planItem = (latestOrder.items || []).find(i => i.type === 'plan');
+            if (planItem && planItem.itemId) {
+              try {
+                const planDoc = await planModel.findById(planItem.itemId).lean();
+                if (planDoc) planSnapshot = { _id: planDoc._id, code: planDoc.code, name: planDoc.name, modulePermissions: planDoc.modulePermissions || [] };
+              } catch (e) { /* ignore */ }
+            }
+          }
+        }
+
+        const modules = (planSnapshot && planSnapshot.modulePermissions) || [];
+        const modulePermissions = [];
+        modules.forEach((m) => {
+          if (Array.isArray(m.actions)) {
+            m.actions.forEach((a) => {
+              if (a && a.key) modulePermissions.push(a.key);
+            });
+          }
+        });
+
+        return {
+          company: { _id: company._id, name: company.name, email: company.contact?.email || null },
+          modulePermissions,
+        };
+      } catch (err) {
+        console.error('Error in getCompanySyncStep3Data:', err);
+        throw err;
+      }
+    }
 }
 
 module.exports = CompanyService;
+
+/** Soft-delete and restore utilities */
+CompanyService.softDeleteCompany = async function(companyId, deletedBy) {
+  const now = Date.now();
+  const cid = mongoose.Types.ObjectId(companyId);
+
+  const company = await Company.findByIdAndUpdate(companyId, { isDeleted: true, deletedAt: now, deletedBy }, { new: true });
+  if (!company) throw new Error('Company not found');
+
+  // Cascade soft-delete to related models
+  await Promise.all([
+    subscriptionModel.updateMany({ companyId: cid }, { isDeleted: true, deletedAt: now }),
+    orderModel.updateMany({ companyId: cid }, { isDeleted: true, deletedAt: now }),
+    transactionModel.updateMany({ companyId: cid }, { isDeleted: true, deletedAt: now }),
+    walletModel.updateMany({ companyId: cid }, { isDeleted: true, deletedAt: now }),
+    auditTrailModel.updateMany({ companyId: cid }, { isDeleted: true, deletedAt: now }),
+    branchModel.updateMany({ companyId: cid }, { isDeleted: true, deletedAt: now }),
+    clientUserModel.updateMany({ companyId: cid }, { isDeleted: true, deletedAt: now }),
+  ]);
+
+  // Notify third-party callback if configured
+  try {
+    const cb = process.env.COMPANY_DELETION_CALLBACK_URL;
+    if (cb) {
+      // Node 18+ has global fetch
+      await fetch(cb, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ companyId, deletedAt: now })
+      });
+    }
+  } catch (e) {
+    console.error('Error notifying deletion callback:', e);
+  }
+
+  return { success: true, companyId, deletedAt: now };
+};
+
+CompanyService.listDeletedCompanies = async function({ page = 1, limit = 20 } = {}) {
+  const skip = (page - 1) * limit;
+  const filter = { isDeleted: true };
+  const total = await Company.countDocuments(filter);
+  const items = await Company.find(filter).sort({ deletedAt: -1 }).skip(skip).limit(Number(limit)).lean();
+  return { items, total, page: Number(page), limit: Number(limit) };
+};
+
+CompanyService.restoreCompany = async function(companyId, restoredBy) {
+  const now = Date.now();
+  const cid = mongoose.Types.ObjectId(companyId);
+  const company = await Company.findByIdAndUpdate(companyId, { isDeleted: false, deletedAt: null, deletedBy: null, updatedBy: restoredBy }, { new: true });
+  if (!company) throw new Error('Company not found');
+
+  await Promise.all([
+    subscriptionModel.updateMany({ companyId: cid }, { isDeleted: false, deletedAt: null }),
+    orderModel.updateMany({ companyId: cid }, { isDeleted: false, deletedAt: null }),
+    transactionModel.updateMany({ companyId: cid }, { isDeleted: false, deletedAt: null }),
+    walletModel.updateMany({ companyId: cid }, { isDeleted: false, deletedAt: null }),
+    auditTrailModel.updateMany({ companyId: cid }, { isDeleted: false, deletedAt: null }),
+    branchModel.updateMany({ companyId: cid }, { isDeleted: false, deletedAt: null }),
+    clientUserModel.updateMany({ companyId: cid }, { isDeleted: false, deletedAt: null }),
+  ]);
+
+  return company;
+};

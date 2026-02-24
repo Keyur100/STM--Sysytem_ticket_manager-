@@ -1,11 +1,14 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { Box, Paper, Button, Stack, Dialog, DialogTitle, DialogContent, DialogActions, Typography, CircularProgress } from "@mui/material";
+import { Box, Paper, Button, Stack, Dialog, DialogTitle, DialogContent, DialogActions, Typography, CircularProgress, Alert } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import api from "../../../api/axios";
 import TableWrapper from "../../../components/common/TableWrapper";
 import useDebounce from "../../../helpers/hooks/useDebounce";
 import usePermissions from "../../../helpers/hooks/usePermissions";
 import CashPaymentDialog from "./CashPaymentDialog";
+import UpgradeDialog from "../subscription/UpgradeDialog";
+import ReactivateDialog from "../subscription/ReactivateDialog";
+import SyncModal from './SyncModal';
 
 export default function CompanyList() {
   const [companies, setCompanies] = useState([]);
@@ -16,10 +19,15 @@ export default function CompanyList() {
   const [order, setOrder] = useState("asc");
   const [orderBy, setOrderBy] = useState("name");
   const [selectedCompany, setSelectedCompany] = useState(null);
-  const [cashPaymentOpen, setCashPaymentOpen] = useState(false);
+  
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailsData, setDetailsData] = useState({ company: null });
   const [loadingDetails, setLoadingDetails] = useState(false);
+  const [syncLoading, setSyncLoading] = useState(false);
+  const [syncMessage, setSyncMessage] = useState('');
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
+  const [reactivateOpen, setReactivateOpen] = useState(false);
+  const [syncModalOpen, setSyncModalOpen] = useState(false);
 
   const nav = useNavigate();
   const { hasPermission } = usePermissions();
@@ -77,10 +85,57 @@ export default function CompanyList() {
     }
   }, []);
 
+  const hasPaidOrders = (company) => {
+    if (!company) return false;
+    // Consider company as 'paid' when there is no pending amount
+    if (company.paymentTotals && typeof company.paymentTotals.totalPendingPaise === 'number') {
+      return company.paymentTotals.totalPendingPaise === 0;
+    }
+
+    // Fallback: if recent orders show paid status or successful payments
+    if (company.orderSummary && Array.isArray(company.orderSummary.recentOrders)) {
+      return company.orderSummary.recentOrders.some(
+        (o) => o.status === "paid" || (Array.isArray(o.payments) && o.payments.some((p) => p.status === "success"))
+      );
+    }
+
+    return false;
+  };
+
   const closeDetails = useCallback(() => {
     setDetailsOpen(false);
     setDetailsData({ company: null });
+    setSyncMessage('');
   }, []);
+
+  // Helper: Check if company has unpaid/pending payments
+  const hasUnpaidPayments = (company) => {
+    // Prefer compact totals if provided
+    if (company?.paymentTotals && typeof company.paymentTotals.totalPendingPaise === 'number') {
+      return company.paymentTotals.totalPendingPaise > 0;
+    }
+
+    // Fallback: inspect recent orders for any amountDue
+    if (company?.orderSummary?.recentOrders && company.orderSummary.recentOrders.length > 0) {
+      return company.orderSummary.recentOrders.some(o => (o.final?.amountDuePaise || 0) > 0);
+    }
+
+    return false;
+  };
+
+  // Sync company data to 3rd-party Laravel API
+  const handleSync = async (companyId) => {
+    setSyncLoading(true);
+    setSyncMessage('');
+    try {
+      await api.post(`/saas/company/${companyId}/sync`);
+      setSyncMessage({ type: 'success', text: 'Sync completed successfully' });
+    } catch (err) {
+      setSyncMessage({ type: 'error', text: err.response?.data?.message || 'Sync failed' });
+    } finally {
+      setSyncLoading(false);
+    }
+  };
 
   /** 🔹 Define Table Columns */
   const columns = [
@@ -109,14 +164,40 @@ export default function CompanyList() {
       label: "Plan Expiry",
       sortable: true,
       width: 160,
-      render: (r) =>
-        r.planExpiry
-          ? new Date(r.planExpiry).toLocaleDateString("en-IN", {
-              day: "2-digit",
-              month: "short",
-              year: "numeric",
-            })
-          : "—",
+      render: (r) => {
+        if (!r.planExpiry) return "—";
+
+        const DAY_MS = 24 * 60 * 60 * 1000;
+        const now = Date.now();
+        const expiry = Number(r.planExpiry);
+        const durationDays = r.plan?.durationDays || null;
+
+        let display = new Date(expiry).toLocaleDateString("en-IN", {
+          day: "2-digit",
+          month: "short",
+          year: "numeric",
+        });
+
+        // If durationDays available, compute percent elapsed and color
+        if (durationDays && durationDays > 0) {
+          const daysRemaining = Math.ceil((expiry - now) / DAY_MS);
+          const elapsed = Math.max(0, durationDays - daysRemaining);
+          const pct = Math.min(100, Math.round((elapsed / durationDays) * 100));
+
+          let bg = "#a5d6a7"; // green
+          if (pct >= 80) bg = "#ef9a9a"; // red-ish
+          else if (pct >= 40) bg = "#fff59d"; // yellow-ish
+
+          return (
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              <Box sx={{ width: 10, height: 10, borderRadius: "50%", backgroundColor: bg }} />
+              <span>{display}</span>
+            </Box>
+          );
+        }
+
+        return display;
+      },
     },
     {
       field: "status",
@@ -154,22 +235,34 @@ export default function CompanyList() {
           onDelete={handleDelete}
           editPerm="company.update"
           deletePerm="company.delete"
+          hideEdit={false}
+          hideDelete={false}
+          hideView={false}
+          hideAdd={false}
           addLabel="Add Company"
         />
       </Paper>
 
       {/* 💰 Cash Payment Dialog */}
-      <CashPaymentDialog
-        open={cashPaymentOpen}
-        company={selectedCompany}
-        onClose={() => {
-          setCashPaymentOpen(false);
-          setSelectedCompany(null);
-        }}
-        onSuccess={() => {
-          fetchCompanies();
-        }}
-      />
+      {selectedCompany && (
+        <CashPaymentDialog
+          open={!!selectedCompany}
+          company={selectedCompany}
+          onClose={() => {
+            setSelectedCompany(null);
+          }}
+          onSuccess={() => {
+            // capture id before clearing selection
+            const cid = selectedCompany?.company?._id || selectedCompany?._id;
+            setSelectedCompany(null);
+            fetchCompanies();
+            // Refresh details if detail dialog is open
+            if (detailsOpen && detailsData.company?.company?._id === cid) {
+              openDetails({ _id: cid });
+            }
+          }}
+        />
+      )}
 
       {/* Details Dialog */}
       <Dialog open={detailsOpen} onClose={closeDetails} maxWidth="md" fullWidth>
@@ -179,14 +272,78 @@ export default function CompanyList() {
             <Box display="flex" justifyContent="center" p={4}><CircularProgress /></Box>
           ) : detailsData.company ? (
             <Box>
+              {/* Sync Message */}
+              {syncMessage && (
+                <Alert severity={syncMessage.type} sx={{ mb: 2 }}>
+                  {syncMessage.text}
+                </Alert>
+              )}
+
+              {/* Action Buttons */}
+              {hasPermission('saas.company_record_payment') && (
+                <Stack direction="row" spacing={1} sx={{ mb: 3 }}>
+                      {hasUnpaidPayments(detailsData.company) && !hasPaidOrders(detailsData.company) && (
+                        <Button 
+                          variant="contained" 
+                          color="success"
+                          onClick={() => setSelectedCompany(detailsData.company)}
+                        >
+                          💰 Record Payment
+                        </Button>
+                      )}
+                      {hasPaidOrders(detailsData.company) && (
+                        <Button 
+                          variant="outlined" 
+                          color="primary"
+                          onClick={() => setSyncModalOpen(true)}
+                          disabled={syncLoading}
+                        >
+                          🔄 Stepwise Sync
+                        </Button>
+                      )}
+                </Stack>
+              )}
               {/* Company Info */}
               <Typography variant="h6" sx={{ mb: 2, fontWeight: "bold" }}>📋 Company Information</Typography>
-              <Paper sx={{ p: 2, mb: 3, backgroundColor: "#f5f5f5" }}>
+              <Paper sx={{ p: 2, mb: 3, backgroundColor: 'background.paper' }}>
                 <Typography><strong>Name:</strong> {detailsData.company.company?.name || '-'}</Typography>
                 <Typography><strong>Email:</strong> {detailsData.company.company?.email || '-'}</Typography>
                 <Typography><strong>Status:</strong> {detailsData.company.company?.status || '-'}</Typography>
                 <Typography><strong>Created:</strong> {detailsData.company.company?.createdAt ? new Date(detailsData.company.company.createdAt).toLocaleString() : '-'}</Typography>
               </Paper>
+
+              {/* Branches */}
+              {detailsData.company.branches && detailsData.company.branches.length > 0 && (
+                <>
+                  <Typography variant="h6" sx={{ mb: 2, fontWeight: "bold" }}>🏢 Branches</Typography>
+                  <Paper sx={{ p: 2, mb: 3 }}>
+                    {detailsData.company.branches.map((b) => (
+                      <Box key={b._id} sx={{ mb: 1 }}>
+                        <Typography variant="body2"><strong>{b.name || b.code || b._id}</strong></Typography>
+                        <Typography variant="caption">{b.address || b.city || ''} {b.phone ? `• ${b.phone}` : ''}</Typography>
+                      </Box>
+                    ))}
+                  </Paper>
+                </>
+              )}
+
+              {/* Client Users */}
+              {detailsData.company.clientUsers && detailsData.company.clientUsers.length > 0 && (
+                <>
+                  <Typography variant="h6" sx={{ mb: 2, fontWeight: "bold" }}>👥 Client Users</Typography>
+                  <Paper sx={{ p: 2, mb: 3 }}>
+                    {detailsData.company.clientUsers.map((u) => (
+                      <Paper key={u._id} sx={{ p: 1, mb: 1 }}>
+                        <Typography><strong>{u.name || u.email}</strong> <small>({u.status})</small></Typography>
+                        <Typography variant="caption">Email: {u.email || '-'}</Typography>
+                        <Typography variant="caption" display="block">Phone: {u.phone || '-'}</Typography>
+                        <Typography variant="caption" display="block">Created: {u.createdAt ? new Date(u.createdAt).toLocaleString() : '-'}</Typography>
+                        <Box mt={1}><Typography variant="caption">Raw:</Typography><Box component="pre" sx={{ maxHeight: 160, overflow: 'auto', backgroundColor: '#fafafa', p: 1 }}>{JSON.stringify(u, null, 2)}</Box></Box>
+                      </Paper>
+                    ))}
+                  </Paper>
+                </>
+              )}
 
               {/* Plan Details */}
               {detailsData.company.plan && (
@@ -197,12 +354,34 @@ export default function CompanyList() {
                     <Typography><strong>Price:</strong> ₹{detailsData.company.plan.planPricePaise ? (detailsData.company.plan.planPricePaise / 100).toFixed(2) : '-'}</Typography>
                     <Typography><strong>Status:</strong> {detailsData.company.plan.status || '-'}</Typography>
                     <Typography><strong>Expiry:</strong> {detailsData.company.plan.endAt ? new Date(detailsData.company.plan.endAt).toLocaleString() : '-'}</Typography>
+                    
+                    {/* Subscription Action Buttons */}
+                    {hasPermission('saas.subscription_upgrade') && detailsData.company.plan.status === 'ACTIVE' && (
+                      <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
+                        <Button variant="outlined" size="small" onClick={() => setUpgradeOpen(true)}>
+                          🚀 Upgrade
+                        </Button>
+                      </Stack>
+                    )}
+
+                    {hasPermission('saas.subscription_reactivate') && (detailsData.company.plan.status === 'EXPIRED' || detailsData.company.plan.status === 'SUSPENDED') && (
+                      <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
+                        <Button variant="outlined" size="small" onClick={() => setReactivateOpen(true)}>
+                          ♻️ Reactivate
+                        </Button>
+                      </Stack>
+                    )}
+
                     {detailsData.company.plan.addonSnapshot && detailsData.company.plan.addonSnapshot.length > 0 && (
                       <Box sx={{ mt: 2 }}>
                         <Typography variant="subtitle2"><strong>Addons:</strong></Typography>
-                        {detailsData.company.plan.addonSnapshot.map((addon, i) => (
-                          <Typography key={i} variant="body2">• {addon.name} - ₹{(addon.pricePaise / 100).toFixed(2)}</Typography>
-                        ))}
+                        {detailsData.company.plan.addonSnapshot.map((addon, i) => {
+                          const qty = addon.qty || addon.quantity || 1;
+                          const price = (addon.pricePaise || 0) / 100;
+                          return (
+                            <Typography key={i} variant="body2">• {addon.name} - {qty} × ₹{price.toFixed(2)} = ₹{(price * qty).toFixed(2)}</Typography>
+                          );
+                        })}
                       </Box>
                     )}
                   </Paper>
@@ -213,7 +392,7 @@ export default function CompanyList() {
               {detailsData.company.wallet && (
                 <>
                   <Typography variant="h6" sx={{ mb: 2, fontWeight: "bold" }}>💰 Wallet Balance</Typography>
-                  <Paper sx={{ p: 2, mb: 3, backgroundColor: "#e8f5e9" }}>
+                  <Paper sx={{ p: 2, mb: 3, backgroundColor: 'success.light' }}>
                     <Typography variant="h6" sx={{ fontWeight: "bold" }}>₹{(detailsData.company.wallet.balance || 0).toFixed(2)}</Typography>
                     <Typography variant="body2">Status: {detailsData.company.wallet.status || '-'}</Typography>
                   </Paper>
@@ -229,16 +408,16 @@ export default function CompanyList() {
                     <Typography variant="subtitle2" sx={{ mt: 2, fontWeight: "bold" }}>Recent Orders:</Typography>
                     {detailsData.company.orderSummary.recentOrders && detailsData.company.orderSummary.recentOrders.length > 0 ? (
                       detailsData.company.orderSummary.recentOrders.map((order) => (
-                        <Paper key={order._id} sx={{ p: 2, mt: 1.5, backgroundColor: "#fff9c4", border: "1px solid #ffeb3b" }}>
+                        <Paper key={order._id} sx={{ p: 2, mt: 1.5, backgroundColor: 'warning.light', border: (theme) => `1px solid ${theme.palette.warning.main}` }}>
                           <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 1 }}>
                             <Typography variant="body2"><strong>Order #{order.orderNumber}</strong></Typography>
-                            <Typography variant="caption" sx={{ backgroundColor: order.status === "paid" ? "#c8e6c9" : "#ffccbc", p: 0.5, borderRadius: 1, fontWeight: "bold" }}>{order.status.toUpperCase()}</Typography>
+                            <Typography variant="caption" sx={{ backgroundColor: order.status === "paid" ? 'success.light' : 'warning.light', p: 0.5, borderRadius: 1, fontWeight: "bold" }}>{order.status.toUpperCase()}</Typography>
                           </Box>
-                          <Typography variant="caption" sx={{ display: "block", mb: 1.5, color: "#666" }}>{new Date(order.createdAt).toLocaleString()}</Typography>
+                          <Typography variant="caption" sx={{ display: "block", mb: 1.5, color: "text.secondary" }}>{new Date(order.createdAt).toLocaleString()}</Typography>
 
                           {/* Items Details */}
                           {order.items && order.items.length > 0 && (
-                            <Box sx={{ mb: 1.5, pl: 1, borderLeft: "3px solid #fbc02d" }}>
+                            <Box sx={{ mb: 1.5, pl: 1, borderLeft: (theme) => `3px solid ${theme.palette.warning.main}` }}>
                               <Typography variant="subtitle2" sx={{ fontWeight: "bold", mb: 0.5 }}>Items:</Typography>
                               {order.items.map((item, idx) => (
                                 <Box key={idx} sx={{ mb: 0.8 }}>
@@ -256,7 +435,7 @@ export default function CompanyList() {
 
                           {/* Totals Breakdown */}
                           {order.totals && (
-                            <Box sx={{ mt: 1.5, p: 1.5, backgroundColor: "#f5f5f5", borderRadius: 1 }}>
+                            <Box sx={{ mt: 1.5, p: 1.5, backgroundColor: 'background.paper', borderRadius: 1 }}>
                               <Typography variant="subtitle2" sx={{ fontWeight: "bold", mb: 1 }}>Totals Breakdown:</Typography>
                               <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1 }}>
                                 <Typography variant="caption"><strong>Subtotal:</strong> ₹{((order.totals.subtotalPaise || 0) / 100).toFixed(2)}</Typography>
@@ -270,8 +449,8 @@ export default function CompanyList() {
                                   <Typography variant="caption"><strong>Tax:</strong> ₹{((order.totals.totalTaxPaise || 0) / 100).toFixed(2)}</Typography>
                                 )}
                               </Box>
-                              <Box sx={{ mt: 1, pt: 1, borderTop: "2px solid #ddd" }}>
-                                <Typography variant="body2" sx={{ fontWeight: "bold", color: "#d32f2f" }}>
+                              <Box sx={{ mt: 1, pt: 1, borderTop: (theme) => `2px solid ${theme.palette.divider}` }}>
+                                <Typography variant="body2" sx={{ fontWeight: "bold", color: 'error.main' }}>
                                   Total Payable: ₹{((order.totals.totalPayablePaise || 0) / 100).toFixed(2)}
                                 </Typography>
                               </Box>
@@ -301,21 +480,13 @@ export default function CompanyList() {
                 </>
               )}
 
-              {/* Payment Summary */}
-              {detailsData.company.paymentSummary && (
+              {/* Payment Totals (compact) */}
+              {detailsData.company.paymentTotals && (
                 <>
                   <Typography variant="h6" sx={{ mb: 2, fontWeight: "bold" }}>💳 Payment Summary</Typography>
                   <Paper sx={{ p: 2, mb: 3 }}>
-                    <Typography><strong>Total Paid:</strong> ₹{(detailsData.company.paymentSummary.totalPaidPaise / 100).toFixed(2)}</Typography>
-                    <Typography><strong>Total Pending:</strong> ₹{(detailsData.company.paymentSummary.totalPendingPaise / 100).toFixed(2)}</Typography>
-                    {detailsData.company.paymentSummary.paymentByMethod && detailsData.company.paymentSummary.paymentByMethod.length > 0 && (
-                      <Box sx={{ mt: 2 }}>
-                        <Typography variant="subtitle2"><strong>Payment Methods:</strong></Typography>
-                        {detailsData.company.paymentSummary.paymentByMethod.map((pm, i) => (
-                          <Typography key={i} variant="body2">• {pm.method}: ₹{(pm.amount).toFixed(2)}</Typography>
-                        ))}
-                      </Box>
-                    )}
+                    <Typography><strong>Total Paid:</strong> ₹{(detailsData.company.paymentTotals.totalPaidPaise / 100).toFixed(2)}</Typography>
+                    <Typography><strong>Total Pending:</strong> ₹{(detailsData.company.paymentTotals.totalPendingPaise / 100).toFixed(2)}</Typography>
                   </Paper>
                 </>
               )}
@@ -327,7 +498,7 @@ export default function CompanyList() {
                   <Paper sx={{ p: 2 }}>
                     {detailsData.company.transactions.length > 0 ? (
                       detailsData.company.transactions.map((t) => (
-                        <Paper key={t._id} sx={{ p: 1.5, mb: 1, backgroundColor: "#f0f0f0" }}>
+                        <Paper key={t._id} sx={{ p: 1.5, mb: 1, backgroundColor: 'background.paper' }}>
                           <Typography variant="body2"><strong>{t.type}</strong></Typography>
                           <Typography variant="body2">Amount: ₹{(t.amount).toFixed(2)}</Typography>
                           <Typography variant="caption">{t.description}</Typography>
@@ -349,6 +520,40 @@ export default function CompanyList() {
           <Button onClick={closeDetails}>Close</Button>
         </DialogActions>
       </Dialog>
+
+      {/* Upgrade Dialog */}
+      {detailsData.company && (
+        <UpgradeDialog
+          open={upgradeOpen}
+          subscription={detailsData.company.plan}
+          company={detailsData.company.company}
+          onClose={() => setUpgradeOpen(false)}
+          onSuccess={() => {
+            setUpgradeOpen(false);
+            openDetails({ _id: detailsData.company.company?._id });
+          }}
+        />
+      )}
+
+      {/* Reactivate Dialog */}
+      {detailsData.company && (
+        <ReactivateDialog
+          open={reactivateOpen}
+          subscription={detailsData.company.plan}
+          company={detailsData.company.company}
+          onClose={() => setReactivateOpen(false)}
+          onSuccess={() => {
+            setReactivateOpen(false);
+            openDetails({ _id: detailsData.company.company?._id });
+          }}
+        />
+      )}
+      {/* Stepwise Sync Modal */}
+      <SyncModal
+        open={syncModalOpen}
+        onClose={() => setSyncModalOpen(false)}
+        companyId={detailsData.company?.company?._id}
+      />
     </Box>
   );
 }

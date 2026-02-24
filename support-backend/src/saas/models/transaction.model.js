@@ -30,8 +30,8 @@ const TransactionSchema = new Schema({
   },
   source: { 
     type: String, 
-    enum: ['MANUAL', 'PAYMENT', 'REFUND', 'ADJUSTMENT', 'COUPON'],
-    default: 'MANUAL'
+    enum: ['WALLET', 'CASH','MANUAL'],// MANUAL for  wallet add in company
+    default: 'WALLET'
   },
   description: String,
   paymentId: { 
@@ -54,7 +54,7 @@ TransactionSchema.index({ type: 1 });
 
 module.exports = mongoose.model('Transaction', TransactionSchema);
 
-
+// deduct wallet disabale 0 
 // create flow
 
 // BRANCH CREATION-branchName store{code,name,}
