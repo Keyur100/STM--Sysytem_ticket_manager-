@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { Box, Paper, Button, Stack, Dialog, DialogTitle, DialogContent, DialogActions, Typography, CircularProgress, Alert } from "@mui/material";
+import { Box, Paper, Button, Stack, Dialog, DialogTitle, DialogContent, DialogActions, Typography, CircularProgress, Alert, Accordion, AccordionSummary, AccordionDetails, Chip } from "@mui/material";
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { useNavigate } from "react-router-dom";
 import api from "../../../api/axios";
 import TableWrapper from "../../../components/common/TableWrapper";
@@ -9,6 +10,8 @@ import CashPaymentDialog from "./CashPaymentDialog";
 import UpgradeDialog from "../subscription/UpgradeDialog";
 import ReactivateDialog from "../subscription/ReactivateDialog";
 import SyncModal from './SyncModal';
+import AddonsPurchaseDialog from './AddonsPurchaseDialog';
+import BranchAdminForm from './BranchAdminForm';
 
 export default function CompanyList() {
   const [companies, setCompanies] = useState([]);
@@ -28,6 +31,11 @@ export default function CompanyList() {
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [reactivateOpen, setReactivateOpen] = useState(false);
   const [syncModalOpen, setSyncModalOpen] = useState(false);
+  const [openAddons, setOpenAddons] = useState(false);
+  const [branchAdminOpen, setBranchAdminOpen] = useState(false);
+  const [selectedBranchId, setSelectedBranchId] = useState(null);
+  const [opLoading, setOpLoading] = useState(false);
+  const [showModulePermissions, setShowModulePermissions] = useState(false);
 
   const nav = useNavigate();
   const { hasPermission } = usePermissions();
@@ -107,6 +115,39 @@ export default function CompanyList() {
     setDetailsData({ company: null });
     setSyncMessage('');
   }, []);
+
+  const handleEditBranch = async (branch) => {
+    setOpLoading(true);
+    setSyncMessage('');
+    try {
+      // Ask backend to sync/edit branch with 3rd-party then update local schema
+      await api.post(`/saas/branch/${branch._id}/sync`);
+      setSyncMessage({ type: 'success', text: 'Branch updated successfully' });
+      // refresh listings and details
+      fetchCompanies();
+      if (detailsData.company?.company?._id) openDetails({ _id: detailsData.company.company._id });
+    } catch (err) {
+      setSyncMessage({ type: 'error', text: err.response?.data?.message || 'Branch update failed' });
+    } finally {
+      setOpLoading(false);
+    }
+  };
+
+  const handleEditClientUser = async (user) => {
+    setOpLoading(true);
+    setSyncMessage('');
+    try {
+      // Ask backend to sync/edit client user with 3rd-party then update local schema
+      await api.post(`/saas/client-user/${user._id}/sync`);
+      setSyncMessage({ type: 'success', text: 'Client user updated successfully' });
+      fetchCompanies();
+      if (detailsData.company?.company?._id) openDetails({ _id: detailsData.company.company._id });
+    } catch (err) {
+      setSyncMessage({ type: 'error', text: err.response?.data?.message || 'Client user update failed' });
+    } finally {
+      setOpLoading(false);
+    }
+  };
 
   // Helper: Check if company has unpaid/pending payments
   const hasUnpaidPayments = (company) => {
@@ -211,6 +252,7 @@ export default function CompanyList() {
     <Box p={2}>
       <Paper sx={{ p: 2 }}>
         <TableWrapper
+          headerLabel="Companies"
           data={companies}
           columns={columns}
           total={total}
@@ -235,8 +277,8 @@ export default function CompanyList() {
           onDelete={handleDelete}
           editPerm="company.update"
           deletePerm="company.delete"
-          hideEdit={false}
-          hideDelete={false}
+          hideEdit={true}
+          hideDelete={true}
           hideView={false}
           hideAdd={false}
           addLabel="Add Company"
@@ -301,6 +343,11 @@ export default function CompanyList() {
                           🔄 Stepwise Sync
                         </Button>
                       )}
+                      {hasPaidOrders(detailsData.company) && hasPermission('saas.addon_purchase') && (
+                        <Button variant="contained" color="secondary" onClick={() => setOpenAddons(true)}>
+                          ➕ Buy Addons
+                        </Button>
+                      )}
                 </Stack>
               )}
               {/* Company Info */}
@@ -318,11 +365,16 @@ export default function CompanyList() {
                   <Typography variant="h6" sx={{ mb: 2, fontWeight: "bold" }}>🏢 Branches</Typography>
                   <Paper sx={{ p: 2, mb: 3 }}>
                     {detailsData.company.branches.map((b) => (
-                      <Box key={b._id} sx={{ mb: 1 }}>
-                        <Typography variant="body2"><strong>{b.name || b.code || b._id}</strong></Typography>
-                        <Typography variant="caption">{b.address || b.city || ''} {b.phone ? `• ${b.phone}` : ''}</Typography>
-                      </Box>
-                    ))}
+                        <Box key={b._id} sx={{ mb: 1 }}>
+                          <Typography variant="body2"><strong>{b.name || b.code || b._id}</strong></Typography>
+                          <Typography variant="caption">{b.address || b.city || ''} {b.phone ? `• ${b.phone}` : ''}</Typography>
+                          <Box sx={{ mt: 1 }}>
+                            {/* <Button size="small" variant="outlined" onClick={() => handleEditBranch(b)} disabled={opLoading}>
+                              Edit Branch
+                            </Button> */}
+                          </Box>
+                        </Box>
+                      ))}
                   </Paper>
                 </>
               )}
@@ -338,7 +390,11 @@ export default function CompanyList() {
                         <Typography variant="caption">Email: {u.email || '-'}</Typography>
                         <Typography variant="caption" display="block">Phone: {u.phone || '-'}</Typography>
                         <Typography variant="caption" display="block">Created: {u.createdAt ? new Date(u.createdAt).toLocaleString() : '-'}</Typography>
-                        <Box mt={1}><Typography variant="caption">Raw:</Typography><Box component="pre" sx={{ maxHeight: 160, overflow: 'auto', backgroundColor: '#fafafa', p: 1 }}>{JSON.stringify(u, null, 2)}</Box></Box>
+                        <Box mt={1}>
+                          {/* <Button size="small" variant="outlined" onClick={() => handleEditClientUser(u)} disabled={opLoading}>
+                            Edit User
+                          </Button> */}
+                        </Box>
                       </Paper>
                     ))}
                   </Paper>
@@ -384,6 +440,48 @@ export default function CompanyList() {
                         })}
                       </Box>
                     )}
+
+                          {detailsData.company.plan.planSnapshot?.modulePermissions && detailsData.company.plan.planSnapshot.modulePermissions.length > 0 && (
+                            <Box sx={{ mt: 2 }}>
+                              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <Typography variant="subtitle2" sx={{ mb: 1 }}><strong>Module Permissions</strong></Typography>
+                                <Button size="small" onClick={() => setShowModulePermissions((s) => !s)}>
+                                  {typeof showModulePermissions === 'undefined' || showModulePermissions ? 'Hide' : 'Show'}
+                                </Button>
+                              </Box>
+
+                              {!showModulePermissions ? (
+                                <Box sx={{ mt: 1 }}>
+                                  <Typography variant="body2" color="text.secondary">{detailsData.company.plan.planSnapshot.modulePermissions.length} modules hidden. Click "Show" to expand.</Typography>
+                                </Box>
+                              ) : (
+                                detailsData.company.plan.planSnapshot.modulePermissions.map((mod, idx) => (
+                                  <Accordion key={idx} sx={{ mt: 1 }}>
+                                    <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                                      <Typography sx={{ fontWeight: 700 }}>{mod.displayName || mod.moduleKey}</Typography>
+                                    </AccordionSummary>
+                                    <AccordionDetails>
+                                      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                                        {(mod.actions || []).map((a, j) => {
+                                          const permKey = `saas.${mod.moduleKey}_${a.key}`;
+                                          const label = a.displayName || a.key || permKey;
+                                          return (
+                                            <Chip
+                                              key={j}
+                                              label={label}
+                                              size="small"
+                                              color={a.enabled ? 'primary' : 'default'}
+                                              variant={a.enabled ? 'filled' : 'outlined'}
+                                            />
+                                          );
+                                        })}
+                                      </Box>
+                                    </AccordionDetails>
+                                  </Accordion>
+                                ))
+                              )}
+                            </Box>
+                          )}
                   </Paper>
                 </>
               )}
@@ -520,6 +618,23 @@ export default function CompanyList() {
           <Button onClick={closeDetails}>Close</Button>
         </DialogActions>
       </Dialog>
+
+      {/* Branch Admin Modal */}
+      <Dialog open={branchAdminOpen} onClose={() => { setBranchAdminOpen(false); setSelectedBranchId(null); }} maxWidth="sm" fullWidth>
+        <DialogTitle>Edit Branch Admin</DialogTitle>
+        <DialogContent>
+          <Box sx={{ mt: 1 }}>
+            <BranchAdminForm companyId={detailsData.company?.company?._id} branchId={selectedBranchId} onSaved={() => { setBranchAdminOpen(false); setSelectedBranchId(null); fetchCompanies(); }} />
+          </Box>
+        </DialogContent>
+      </Dialog>
+
+      <AddonsPurchaseDialog
+        open={openAddons}
+        onClose={() => setOpenAddons(false)}
+        companyId={detailsData.company?.company?._id}
+        onSuccess={() => { setOpenAddons(false); openDetails({ _id: detailsData.company?.company?._id }); fetchCompanies(); }}
+      />
 
       {/* Upgrade Dialog */}
       {detailsData.company && (

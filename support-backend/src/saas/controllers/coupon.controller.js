@@ -47,8 +47,8 @@ exports.remove = async (req, res) => {
 
 // ✅ Apply coupon validation
 exports.applyCoupon = async (req, res) => {
-  const { code, planCode, amountPaise } = req.body;
-  const result = await CouponService.validateAndApply(code, planCode, amountPaise);
+  const { code, planCode, amountPaise, companyId } = req.body;
+  const result = await CouponService.validateAndApply(code, planCode, amountPaise, companyId);
   // Increment usage when coupon is actually applied via API
   try {
     await CouponService.incrementUsage(result.coupon.code);

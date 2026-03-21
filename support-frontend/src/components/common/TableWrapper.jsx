@@ -28,6 +28,7 @@ import AlertDialog from "./modals/AlertDialog";
 
 
 export default function TableWrapper({
+  headerLabel = "Records",
   data = [],
   columns = [],
   total = 0,
@@ -80,8 +81,9 @@ export default function TableWrapper({
       {/* 🔹 Toolbar */}
       <Toolbar sx={{ display: "flex", justifyContent: "space-between", gap: 2 }}>
         <Typography variant="h6" sx={{ fontWeight: 600 }}>
-          Records
+          {headerLabel}
         </Typography>
+        
 
         <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
           {/* Search inside toolbar */}
@@ -110,6 +112,9 @@ export default function TableWrapper({
               {addLabel}
             </Button>
           )}
+          {/* <Box>
+                      <Button variant="outlined" onClick={() => navigate(-1)} sx={{ mr: 1 }}>Back</Button>
+                    </Box> */}
         </Box>
       </Toolbar>
 

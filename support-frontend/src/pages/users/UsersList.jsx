@@ -46,6 +46,7 @@ export default function UsersList() {
     <Box p={2}>
       <Paper sx={{ p: 2 }}>
         <TableWrapper
+          headerLabel="Users"
           data={users}
           columns={columns}
           total={total}

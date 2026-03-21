@@ -1,4 +1,6 @@
 ﻿const { UserAuth, UserProfile } = require("../../models/user.model");
+const crypto = require('crypto');
+const { sendPasswordResetEmail } = require("../../utils/email.helper");
 const { signAccess, signRefresh, saveRefreshToken, revokeRefreshToken, issueTokensAndReturn, verifyRefreshToken } = require("../../utils/token.service");
 const { UserMembership } = require("../../models/userMembership.model");
 const { buildUserPayload } = require("./auth.helper.service");
@@ -218,4 +220,27 @@ async function logout(userId) {
   await revokeRefreshToken(userId);
 }
 
-module.exports = { register, login, refresh, logout,selectDepartment };
+async function forgotPassword(email) {
+  const user = await UserAuth.findOne({ email, isDeleted: { $ne: true } });
+  if (!user) throw new Error('User not found');
+  const token = crypto.randomBytes(32).toString('hex');
+  const expiry = Date.now() + 1000 * 60 * 60; // 1 hour
+  user.resetToken = token;
+  user.resetTokenExpiry = expiry;
+  await user.save();
+  await sendPasswordResetEmail({ to: email, token });
+  return { ok: true };
+}
+
+async function resetPasswordByToken(token, newPassword) {
+  if (!token) throw new Error('Token required');
+  const user = await UserAuth.findOne({ resetToken: token, resetTokenExpiry: { $gt: Date.now() } });
+  if (!user) throw new Error('Invalid or expired token');
+  user.passwordHash = await require('../../utils/bcrypt').hashPassword(newPassword);
+  user.resetToken = null;
+  user.resetTokenExpiry = null;
+  await user.save();
+  return { ok: true };
+}
+
+module.exports = { register, login, refresh, logout, selectDepartment, forgotPassword, resetPasswordByToken };

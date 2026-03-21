@@ -80,13 +80,8 @@ const OrderSchema = new Schema({
     totalPayablePaise: Number
   },
 
-  payments: [{
-    method: { type: String, enum: ['cash','manual'] },
-    amountPaise: Number,
-    paidAt: Number,
-    status: { type: String, enum: ['success','failed'] },
-    referenceId: String // WALLET or cash receipt no
-  }],
+  // Payments are stored in a separate `payments` collection. Keep reference ids here.
+  paymentIds: [{ type: Schema.Types.ObjectId, ref: 'Payment' }],
 
   final: {
     totalPaidPaise: Number,

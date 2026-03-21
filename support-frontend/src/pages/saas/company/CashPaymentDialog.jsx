@@ -127,10 +127,21 @@ export default function CashPaymentDialog({ open, company, onClose, onSuccess })
     }
   };
 
+  const selectedOrder = orders.find(o => String(o._id) === String(selectedOrderId));
+  const getOrderKind = (order) => {
+    if (!order) return 'Payment';
+    if (order.orderType && order.orderType.includes('SUBSCRIPTION')) return 'Plan';
+    // fallback: if any item type is 'plan' treat as Plan, else Add-on
+    if ((order.items || []).some(it => it.type === 'plan')) return 'Plan';
+    return 'Add-on';
+  };
+
+  const orderKind = getOrderKind(selectedOrder);
+
   return (
     <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
       <DialogTitle sx={{ fontWeight: 600, fontSize: 18 }}>
-        💰 Record Cash Payment
+        💰 Record Cash Payment {selectedOrder ? `for ${orderKind}` : ''}
       </DialogTitle>
 
       <DialogContent sx={{ pt: 2 }}>
@@ -233,7 +244,7 @@ export default function CashPaymentDialog({ open, company, onClose, onSuccess })
                 Recording...
               </>
             ) : (
-              "Record Payment"
+              `Record Cash Payment for ${orderKind}`
             )}
           </Button>
         )}

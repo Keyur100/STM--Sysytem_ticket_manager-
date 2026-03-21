@@ -7,12 +7,16 @@ import { setAuth } from "../../store/slices/authSlice";
 import api from "../../api/axios";
 import { Box, TextField, Button, Paper, Typography, Link, InputAdornment, IconButton } from "@mui/material";
 import { Visibility, VisibilityOff } from "@mui/icons-material";
+import { Dialog, DialogTitle, DialogContent, DialogActions } from "@mui/material";
 
 export default function Login() {
   const dispatch = useDispatch();
   const nav = useNavigate();
   // const loc = useLocation();
   const [showPassword, setShowPassword] = useState(false);
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotLoading, setForgotLoading] = useState(false);
 
   const form = useFormik({
     initialValues: { email: "", password: "" },
@@ -32,7 +36,7 @@ export default function Login() {
       } else {
         dispatch(setAuth({ user: data.user, token: data.access }));
         window.localStorage.setItem("refresh_token", data.refresh);
-        nav("/dashboard");
+        nav("/companies");
       }
     },
   });
@@ -74,13 +78,37 @@ export default function Login() {
           <Button fullWidth type="submit" sx={{ mt: 2 }} variant="contained">
             Login
           </Button>
+          <Box mt={1} textAlign="right">
+            <Link component="button" variant="body2" onClick={() => setForgotOpen(true)}>Forgot password?</Link>
+          </Box>
         </form>
-        <Box mt={2} textAlign="center">
-          <Typography variant="body2">
-            Don't have an account?{" "}
-            <Link component={RouterLink} to="/register">Register</Link>
-          </Typography>
-        </Box>
+        {/* Removed register prompt per UI request */}
+
+        <Dialog open={forgotOpen} onClose={() => setForgotOpen(false)}>
+          <DialogTitle>Forgot Password</DialogTitle>
+          <DialogContent>
+            <TextField fullWidth label="Email" value={forgotEmail} onChange={(e) => setForgotEmail(e.target.value)} />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setForgotOpen(false)}>Cancel</Button>
+            <Button
+              onClick={async () => {
+                setForgotLoading(true);
+                try {
+                  await api.post('/auth/forgot-password', { email: forgotEmail });
+                  alert('If the account exists, a reset link has been sent');
+                  setForgotOpen(false);
+                } catch (err) {
+                  alert(err?.response?.data?.message || err?.message || 'Request failed');
+                } finally {
+                  setForgotLoading(false);
+                }
+              }}
+              disabled={forgotLoading}
+              variant="contained"
+            >Send</Button>
+          </DialogActions>
+        </Dialog>
       </Paper>
     </Box>
   );

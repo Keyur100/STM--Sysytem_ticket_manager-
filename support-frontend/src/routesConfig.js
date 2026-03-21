@@ -14,13 +14,13 @@ import ConfirmationNumberIcon from "@mui/icons-material/ConfirmationNumber";
 
 // Each route can have child routes
 const routesConfig = [
-  {
-    label: "Dashboard",
-    icon: DashboardIcon,
-    path: "/dashboard",
-    component: React.lazy(() => import("./pages/Dashboard")),
-    permission: "dashboard.read",
-  },
+  // {
+  //   label: "Dashboard",
+  //   icon: DashboardIcon,
+  //   path: "/dashboard",
+  //   component: React.lazy(() => import("./pages/Dashboard")),
+  //   permission: "dashboard.read",
+  // },
   // {                                                                                                                                                                                                                    
   //   label: "Users",
   //   icon: PeopleIcon,

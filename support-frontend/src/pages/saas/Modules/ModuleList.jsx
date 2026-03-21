@@ -78,19 +78,12 @@ export default function ModuleList() {
   return (
     <Box p={2}>
       <Paper sx={{ p: 2 }}>
-        <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-          <h3 style={{ margin: 0 }}>Modules</h3>
-          {hasPermission("saas.module_create") && (
-            <Button component={Link} to="/modules/new" variant="contained">
-              Add Module
-            </Button>
-          )}
-        </Box>
 
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
         <TableContainer>
           <TableWrapper
+            headerLabel="Modules"
             data={modules}
             columns={[
               { field: 'moduleKey', label: 'Module Key', sortable: true },

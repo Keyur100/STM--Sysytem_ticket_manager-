@@ -73,7 +73,7 @@ All APIs are company-centric. They fetch data from respective tables (Order, Add
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
 | GET | `/saas/coupon` | Get all coupons |
-| GET | `/saas/coupon/get-perticular/:companyId` | Get coupons for company |
+| GET | `/saas/coupon/company/:companyId` | Get coupons for company |
 | POST | `/saas/coupon` | Create coupon |
 | POST | `/saas/coupon/apply` | Apply coupon to order |
 
@@ -122,7 +122,7 @@ All APIs are company-centric. They fetch data from respective tables (Order, Add
 4. **Orders** - `/saas/order/company/:companyId` (on expand)
 5. **Transactions** - `/saas/company/:companyId/transactions` (on expand)
 6. **Wallet** - `/saas/wallet/:companyId` (on expand)
-7. **Coupons** - `/saas/coupon/get-perticular/:companyId` (on expand)
+7. **Coupons** - `/saas/coupon/company/:companyId` (on expand)
 
 ---
 

@@ -162,6 +162,7 @@ export default function TicketList() {
 
       <Paper sx={{ p: 2 }}>
         <TableWrapper
+          headerLabel="Support Tickets"
           data={tickets}
           columns={columns}
           total={total}

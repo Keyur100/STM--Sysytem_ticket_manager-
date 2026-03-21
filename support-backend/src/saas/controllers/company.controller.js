@@ -202,7 +202,7 @@ const recordCashPayment = async (req, res) => {
 const upgradeSubscription = async (req, res) => {
   try {
     const { subscriptionId } = req.params;
-    const { newPlanId, couponCode, useWallet } = req.body;
+    const { newPlanId, couponCode, useWallet, addons = [] } = req.body;
     const createdBy = req.user?._id;
 
     if (!subscriptionId || !newPlanId) {
@@ -214,6 +214,7 @@ const upgradeSubscription = async (req, res) => {
       newPlanId,
       couponCode,
       useWallet,
+      addons,
       createdBy,
     });
 
@@ -245,6 +246,42 @@ const reactivateSubscription = async (req, res) => {
   } catch (err) {
     console.error("Error reactivating subscription:", err);
     return sendError(res, 400, err.message || "Failed to reactivate subscription");
+  }
+};
+
+const downgradeSubscription = async (req, res) => {
+  try {
+    const { subscriptionId } = req.params;
+    const { newPlanId } = req.body;
+    const requestedBy = req.user?._id;
+
+    if (!subscriptionId || !newPlanId) {
+      return sendError(res, 400, 'subscriptionId and newPlanId are required');
+    }
+
+    const result = await CompanyService.schedulePlanChange({ subscriptionId, newPlanId, requestedBy });
+    return sendSuccess(res, result, 'Plan change scheduled successfully');
+  } catch (err) {
+    console.error('Error scheduling downgrade:', err);
+    return sendError(res, 400, err.message || 'Failed to schedule downgrade');
+  }
+};
+
+const purchaseAddons = async (req, res) => {
+  try {
+    const companyId = req.params.companyId;
+    const { addons = [], useWallet = false, couponCode = null } = req.body;
+    const createdBy = req.user?._id;
+
+    if (!companyId || !Array.isArray(addons) || addons.length === 0) {
+      return sendError(res, 400, 'companyId and addons are required');
+    }
+
+    const result = await CompanyService.purchaseAddons({ companyId, addons, useWallet, couponCode, createdBy });
+    return sendSuccess(res, result, 'Addons purchase processed');
+  } catch (err) {
+    console.error('Error purchasing addons:', err);
+    return sendError(res, 400, err.message || 'Failed to purchase addons');
   }
 };
 
@@ -315,6 +352,27 @@ const getFullDetails = async (req, res) => {
   }
 };
 
+const updateUsage = async (req, res) => {
+  try {
+    const { companyId } = req.params;
+    const internalKey = req.headers['x-internal-key'];
+    // allow call if internal key matches OR an authenticated user is present
+    if (!internalKey || internalKey !== process.env.INTERNAL_USAGE_KEY) {
+      // fall back to auth user check
+      if (!req.user) return sendError(res, 401, 'Unauthorized');
+    }
+
+    const { adjustments } = req.body;
+    if (!Array.isArray(adjustments) || adjustments.length === 0) return sendError(res, 400, 'adjustments array required');
+
+    const result = await CompanyService.updateUsage(companyId, adjustments);
+    return sendSuccess(res, result, 'Usage updated');
+  } catch (err) {
+    console.error('Error updating usage:', err);
+    return sendError(res, 400, err.message || 'Failed to update usage');
+  }
+};
+
 module.exports = {
   signup,
   get,
@@ -327,9 +385,12 @@ module.exports = {
   recordCashPayment,
   upgradeSubscription,
   reactivateSubscription,
+  downgradeSubscription,
+  purchaseAddons,
   deleteCompany,
   listDeletedCompanies,
   restoreCompany,
   getPaymentHistory,
   getFullDetails,
+  updateUsage,
 };

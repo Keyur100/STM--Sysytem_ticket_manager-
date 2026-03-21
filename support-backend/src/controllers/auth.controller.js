@@ -44,4 +44,26 @@ async function selectDepartment(req, res) {
     return sendError(res, 400, err.message);
   }
 }
-module.exports = { register, login, refreshToken, logout,selectDepartment };
+ 
+
+async function forgotPassword(req, res) {
+  try {
+    const { email } = req.body;
+    const result = await authService.forgotPassword(email);
+    return sendSuccess(res, result, 'Password reset email sent if account exists');
+  } catch (err) {
+    return sendError(res, 400, err.message);
+  }
+}
+
+async function resetPassword(req, res) {
+  try {
+    const { token, newPassword } = req.body;
+    const result = await authService.resetPasswordByToken(token, newPassword);
+    return sendSuccess(res, result, 'Password updated');
+  } catch (err) {
+    return sendError(res, 400, err.message);
+  }
+}
+
+module.exports = { register, login, refreshToken, logout, selectDepartment, forgotPassword, resetPassword };

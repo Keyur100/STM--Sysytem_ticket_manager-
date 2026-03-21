@@ -32,4 +32,10 @@ function prorateCharge(planCostPaisa, cycleDays, daysUsed) {
   return Math.round(perDay * daysUsed);
 }
 
-module.exports = { addDays, daysBetween, daysInCycle, prorateCharge };
+const formatDate = (ms) => {
+  const d = new Date(ms);
+  return d.toISOString().split("T")[0];
+};
+
+
+module.exports = { addDays, daysBetween, daysInCycle, prorateCharge,formatDate };

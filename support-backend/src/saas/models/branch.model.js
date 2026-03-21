@@ -15,6 +15,7 @@ const BranchSchema = new mongoose.Schema({
   pan: { type: String },
   status: { type: String, default: 'active' },
   contactInfo: { type: mongoose.Schema.Types.Mixed },
+  // admins: [{ name: String, email: String, phone: String, role: String }],
 }, { timestamps: true });
 
 module.exports = mongoose.model('Branch', BranchSchema);

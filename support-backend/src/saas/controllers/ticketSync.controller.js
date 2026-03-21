@@ -1,24 +1,33 @@
-const axios = require('axios');
-const { encrypt, decrypt } = require('../utils/crypto');
+const { sendSecureRequest } = require('../services/sync.service');
 const { sendSuccess, sendError } = require('../../utils/response');
 
 // Fetch tickets from remote Laravel API (encrypted request/response)
 const fetchTickets = async (req, res) => {
   try {
-    const secret = process.env.SYNC_API_SECRET;
-    const remoteUrl = process.env.SAAS_TICKETS_URL;
-    if (!secret || !remoteUrl) return sendError(res, 500, 'Sync not configured');
+    // Build payload expected by external support API
+    // Accept filters via query string: priority, created_at_from, created_at_to, branch_id, company, createdby, status, page, limit, search
+    const listUrl = process.env.SUPPORT_API_LIST_URL || 'http://testing.edobiz.in/api/v1/support/list';
 
-    // Optionally accept query params and include in encrypted payload
-    const payloadEnc = encrypt({ query: req.query || {} }, secret);
+    const payload = {
+      priority: req.query.priority,
+      created_at_from: req.query.created_at_from || req.query.created_from,
+      created_at_to: req.query.created_at_to || req.query.created_to,
+      branch_id: req.query.branch_id,
+      company: req.query.company,
+      createdby: req.query.createdby,
+      status: req.query.status,
+      page: req.query.page || req.query.p || 1,
+      limit: req.query.limit || req.query.per_page || 10,
+      search: req.query.search,
+    };
 
-    const resp = await axios.post(`${remoteUrl}/tickets/list`, { payload: payloadEnc }, { timeout: 20000 });
-    if (!resp.data || !resp.data.payload) return sendError(res, 502, 'Invalid remote response');
+    const resp = await sendSecureRequest(payload, listUrl);
+    if (!resp || !resp.data) return sendError(res, 502, 'Invalid remote response');
 
-    const data = decrypt(resp.data.payload, secret);
-    return sendSuccess(res, data, 'Tickets fetched');
+    // If external API returns { status, message, data: [...] } forward it
+    return sendSuccess(res, resp.data, 'Tickets fetched');
   } catch (err) {
-    console.error('fetchTickets error', err.message || err);
+    console.error('fetchTickets error', err.message || err, err.stack);
     return sendError(res, 500, err.message || 'Failed to fetch tickets');
   }
 };
@@ -26,23 +35,24 @@ const fetchTickets = async (req, res) => {
 // Update ticket status on remote system
 const updateTicketStatus = async (req, res) => {
   try {
-    const secret = process.env.SYNC_API_SECRET;
-    const remoteUrl = process.env.SAAS_TICKETS_URL;
-    if (!secret || !remoteUrl) return sendError(res, 500, 'Sync not configured');
+    const updateUrl = process.env.SUPPORT_API_UPDATE_URL || 'http://testing.edobiz.in/api/v1/support/update';
 
-    const ticketId = req.params.id;
-    const { status, priority } = req.body;
-    if (!status) return sendError(res, 400, 'status required');
+    const ticketId = req.params.id || req.body.id;
+    const { status, comments_reply } = req.body;
+    if (typeof status === 'undefined' || status === null) return sendError(res, 400, 'status required');
 
-    const payloadEnc = encrypt({ ticketId, status, priority }, secret);
+    const payload = {
+      id: ticketId,
+      status,
+      comments_reply: comments_reply || [],
+    };
 
-    const resp = await axios.post(`${remoteUrl}/tickets/update-status`, { payload: payloadEnc }, { timeout: 20000 });
-    if (!resp.data || !resp.data.payload) return sendError(res, 502, 'Invalid remote response');
+    const resp = await sendSecureRequest(payload, updateUrl);
+    if (!resp || !resp.data) return sendError(res, 502, 'Invalid remote response');
 
-    const data = decrypt(resp.data.payload, secret);
-    return sendSuccess(res, data, 'Ticket updated');
+    return sendSuccess(res, resp.data, 'Ticket updated');
   } catch (err) {
-    console.error('updateTicketStatus error', err.message || err);
+    console.error('updateTicketStatus error', err.message || err, err.stack);
     return sendError(res, 500, err.message || 'Failed to update ticket');
   }
 };

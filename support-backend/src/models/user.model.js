@@ -4,6 +4,9 @@ const { Schema, model } = require("mongoose");
 const UserAuthSchema = new Schema({
   email: { type: String, index: true, unique: true },
   passwordHash: String,
+  // Password reset token + expiry (ms since epoch)
+  resetToken: { type: String, default: null },
+  resetTokenExpiry: { type: Number, default: null },
   type: {
     type: String,
     enum: ["SA", "NU", "SU"], // SA = SuperAdmin, NU = NormalUser, SU = SubUser

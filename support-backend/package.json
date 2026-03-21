@@ -7,9 +7,11 @@
     "start": "node src/server.js",
     "seed": "node src/seed/initialData.js",
     "saas:seed": "node src/saas/seed/index.js",
+    "seed:all": "node src/seed/initialData.js && node src/saas/seed/index.js",
     "start:workers": "pm2 start pm2.worker.config.js",
     "hard-delete-worker": "node src/saas/workers/hardDeleteWorker.js",
     "dev": "nodemon src/server.js",
+    "test": "jest --runInBand",
     "lint": "eslint src --ext .js"
   },
   "dependencies": {
@@ -26,6 +28,7 @@
     "mongoose": "^7.4.0",
     "morgan": "^1.10.0",
     "node-cron": "^3.0.2",
+    "nodemailer": "^6.10.1",
     "passport": "^0.6.0",
     "passport-jwt": "^4.0.1",
     "razorpay": "^2.9.6",
@@ -33,6 +36,9 @@
     "yup": "^1.2.0"
   },
   "devDependencies": {
-    "nodemon": "^3.1.10"
+    "nodemon": "^3.1.10",
+    "jest": "^29.6.0",
+     "supertest": "^6.3.3",
+    "mongodb-memory-server": "^8.12.1"
   }
 }

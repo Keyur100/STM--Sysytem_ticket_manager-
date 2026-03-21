@@ -9,6 +9,10 @@ const AddonSchema = new Schema({
   // unit: { type: String, enum: ['USER','GB','TICKET','API_CALL','CUSTOM'], required: true },
   // provides: { type: Schema.Types.Mixed, default: {} }, // e.g. { max_employees: 10 }
   // durationDays: { type: Number, default: null }, // null => permanent
+  // Addon type: 'limit' (adds numeric limits) or 'feature' (toggles features)
+  type: { type: String, enum: ['limit','feature'], default: 'limit' },
+  provides: { type: Schema.Types.Mixed, default: {} },
+  durationDays: { type: Number, default: null },
   //UPDATED
   pricePaise: { type: Number, required: true },
   hasTax: Boolean,

@@ -52,7 +52,7 @@ export default function App() {
   const firstPermitted = useMemo(() => {
     if (!auth?.user?.roles?.permissions) return null;
     const perms = auth.user.roles.permissions;
-    if (perms.includes("*")) return { path: "/dashboard" };
+    if (perms.includes("*")) return { path: "/companies" };
     return routesConfig.find((r) => perms.includes(r.permission)) || null;
   }, [auth?.user?.roles?.permissions]);
 

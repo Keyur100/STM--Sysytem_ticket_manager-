@@ -26,6 +26,7 @@ export default function CompanyFormStepper() {
 
   const emptyForm = {
     _id: null,
+    code: "",
     name: "",
     url: "",
     panNo: "",
@@ -65,6 +66,7 @@ export default function CompanyFormStepper() {
 
     setForm({
       _id: companyDetails._id || null,
+      code: companyDetails.code || '',
       name: companyDetails.name || "",
       url: companyDetails.url || "",
       panNo: companyDetails.panNo || "",
@@ -75,7 +77,8 @@ export default function CompanyFormStepper() {
         phone: companyDetails.contact?.phone || "",
         address: companyDetails.contact?.address || "",
       },
-      plan: companyDetails.plan || null,
+      // plan may be stored as { planSnapshot: {...} } or as a plain snapshot
+      plan: (companyDetails.plan && (companyDetails.plan.planSnapshot || companyDetails.plan)) || null,
       selectedAddons: companyDetails.selectedAddons || {},
       // Prefill branch defaults from company
       branchCompanyName: companyDetails.name || "",
@@ -85,7 +88,25 @@ export default function CompanyFormStepper() {
       branchEmail: companyDetails.contact?.email || "",
       branchGstn: companyDetails.gstNo || companyDetails.gst || "",
       branchPan: companyDetails.panNo || "",
+      branchCode: companyDetails.branches && companyDetails.branches[0] ? (companyDetails.branches[0].code || '') : '',
     });
+    // If company has branches, prefill first branch fields (for edit flows)
+    if (companyDetails.branches && companyDetails.branches.length > 0) {
+      const b = companyDetails.branches[0];
+      setForm((f) => ({ ...f,
+        branchId: b._id,
+        branchCode: b.code || '',
+        branchCompanyName: b.companyName || f.branchCompanyName,
+        branchName: b.name || f.branchName,
+        branchAddress: b.address || f.branchAddress,
+        branchPhone: b.phone || f.branchPhone,
+        branchPhone2: b.phone2 || f.branchPhone2,
+        branchEmail: b.email || f.branchEmail,
+        branchGstn: b.gstn || f.branchGstn,
+        branchPan: b.pan || f.branchPan,
+        branchLogo: b.logo || f.branchLogo,
+      }));
+    }
   }, [id, companyDetails]);
 
   /** Handle form changes */
@@ -116,6 +137,12 @@ export default function CompanyFormStepper() {
           contact: form.contact,
         };
         const action = await dispatch(createDraftCompany(draftPayload));
+        // If the action failed (validation / isExist), do not proceed
+        if (action.error) {
+          const msg = action.payload?.message || action.payload?.error || action.error.message || 'Failed to create draft';
+          setPaymentError(msg);
+          return;
+        }
         const created = action.payload;
         if (created && created._id) setForm((f) => ({ ...f, _id: created._id }));
       } else {
@@ -140,11 +167,7 @@ export default function CompanyFormStepper() {
     if (activeStep > 0 && activeStep < steps.length - 1) {
       // If Branch step (index 1) then create branch before proceeding
       if (activeStep === 1) {
-        // create branch only once per company creation
-        if (form.branchCreated) {
-          setActiveStep((s) => s + 1);
-          return;
-        }
+        // allow updating the branch when returning to this step (if branchId exists)
 
         if (form._id && form.branchName) {
           const payload = {
@@ -170,11 +193,22 @@ export default function CompanyFormStepper() {
           };
 
           try {
-            await api.post('/saas/branch', payload);
-            // mark branch created to avoid duplicate creates
-            setForm((f) => ({ ...f, branchCreated: true }));
+            // If branchId present, update rather than create
+            if (form.branchId) {
+              await api.put(`/saas/branch/${form.branchId}`, payload);
+              setForm((f) => ({ ...f, branchCreated: true }));
+            } else {
+              const res = await api.post('/saas/branch', payload);
+              const created = res?.data || res;
+              // mark branch created and store returned id to allow future updates
+              setForm((f) => ({ ...f, branchCreated: true, branchId: created._id || created.id || f.branchId }));
+            }
           } catch (err) {
-            console.error('Failed to create branch from stepper', err);
+            console.error('Failed to create/update branch from stepper', err);
+            const isExist = err?.response?.data?.isExist || err?.response?.data?.error === 'isExist';
+            const message = err?.response?.data?.message || err?.message || 'Failed to create/update branch';
+            setPaymentError(message);
+            if (isExist) return; // don't advance to next step
           }
         }
         // proceed to next step
@@ -184,7 +218,7 @@ export default function CompanyFormStepper() {
 
       // For other intermediate steps (plan/addons), update company as before
       if (form._id) {
-        await dispatch(
+        const action = await dispatch(
           updateCompany({
             id: form._id,
             data: {
@@ -198,6 +232,10 @@ export default function CompanyFormStepper() {
             },
           })
         );
+        if (action.error) {
+          setPaymentError(action.error.message || 'Failed to update company');
+          return;
+        }
       }
       setActiveStep((s) => s + 1);
       return;
@@ -237,6 +275,18 @@ export default function CompanyFormStepper() {
 
   /** Validate step enablement */
   const validateStep = () => {
+    // Basic client-side validations per step
+    if (activeStep === 0) {
+      if (!form.code || !form.name || !form.contact || !form.contact.email) return false;
+    }
+    if (activeStep === 1) {
+      // require primary branch fields when creating/updating branch
+      if (!form.branchName || !form.branchCompanyName || !form.branchAddress || !form.branchEmail || !form.branchCode) return false;
+    }
+    if (activeStep === 2) {
+      // plan must be selected
+      if (!form.plan) return false;
+    }
     return true;
   };
 

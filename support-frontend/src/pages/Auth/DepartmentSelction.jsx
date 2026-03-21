@@ -32,7 +32,7 @@ export default function DepartmentSelect() {
     dispatch(setAuth({ user: data.user, token: data.access }));
     window.localStorage.setItem("refresh_token", data.refresh);
 
-    nav("/dashboard");
+    nav("/companies");
   };
 
   return (

@@ -18,6 +18,8 @@ module.exports = {
     '1': process.env.SYNC_REMOTE_URL_1 || process.env.SYNC_REMOTE_URL,
     '2': process.env.SYNC_REMOTE_URL_2 || process.env.SYNC_REMOTE_URL,
     '3': process.env.SYNC_REMOTE_URL_3 || process.env.SYNC_REMOTE_URL,
+    '4': process.env.SYNC_REMOTE_URL_4 || process.env.SYNC_REMOTE_URL,
+    '5': process.env.SYNC_REMOTE_URL_5 || process.env.SYNC_REMOTE_URL,
   },
   requestTimeout: 20000,
   allowedTimeWindow: 5 * 60 * 1000, // 5 minutes

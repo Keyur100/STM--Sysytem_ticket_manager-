@@ -27,6 +27,9 @@ router.post("/auth/login", validation(require("../validators/auth.login")), tryC
 router.post("/auth/refresh", tryCatch(authController.refreshToken));
 router.post("/auth/logout", authJwt, tryCatch(authController.logout));
 router.post("/auth/select-department", tryCatch(authController.selectDepartment));
+// Forgot / Reset password (no auth required)
+router.post('/auth/forgot-password', tryCatch(authController.forgotPassword));
+router.post('/auth/reset-password', tryCatch(authController.resetPassword));
 
 // Users
 router.post("/users", authJwt, rbac("user.create"), validation(require("../validators/user.create")), tryCatch(userController.createUser));

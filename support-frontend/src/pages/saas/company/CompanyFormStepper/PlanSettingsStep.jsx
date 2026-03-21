@@ -5,6 +5,7 @@ import React, {
   useMemo,
   memo,
 } from "react";
+import * as RW from 'react-window';
 import {
   Grid,
   Typography,
@@ -12,7 +13,6 @@ import {
   FormControlLabel,
   Card,
   CardContent,
-  TextField,
   Divider,
   Paper,
   Box,
@@ -20,6 +20,7 @@ import {
   AccordionSummary,
   AccordionDetails,
 } from "@mui/material";
+import RequiredTextField from '../../../../components/form/RequiredTextField';
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { useSelector } from "react-redux";
 import EmojiEventsIcon from "@mui/icons-material/EmojiEvents";
@@ -38,7 +39,9 @@ export default function PlanSettingsStep({ form, handleChange, plansOverride = n
       if (plansOverride && Array.isArray(plansOverride)) {
         setPlans(plansOverride);
       } else {
-        const res = await api.get("/saas/plan");
+        // if creating a new company (form._id not present) show only active plans
+        const params = (form && !form._id) ? { params: { isActive: true } } : {};
+        const res = await api.get("/saas/plan", params);
         // backend wraps response in { success, message, data }
         const payload = res?.data ?? res?.plans ?? res?.items ?? res ?? [];
         setPlans(Array.isArray(payload) ? payload : payload.plans || []);
@@ -48,7 +51,7 @@ export default function PlanSettingsStep({ form, handleChange, plansOverride = n
     } finally {
       setLoading(false);
     }
-  }, [plansOverride]);
+  }, [plansOverride, form && form._id]);
 
   useEffect(() => {
     fetchPlans();
@@ -79,6 +82,38 @@ export default function PlanSettingsStep({ form, handleChange, plansOverride = n
       }
 
       setSelectedPlan(plan);
+      // Use the plan's saved modulePermissions as the source of truth for the company stepper UI
+      // Show only modules present in the plan and reflect stored visible/enabled flags.
+      const planMods = plan.modulePermissions || [];
+      const normalizeFlag = (v) => {
+        if (v === true || v === 1) return true;
+        if (v === false || v === 0) return false;
+        if (typeof v === 'string') {
+          const s = v.trim().toLowerCase();
+          if (s === 'true' || s === '1') return true;
+          if (s === 'false' || s === '0') return false;
+        }
+        return false;
+      };
+
+      const merged = planMods.map((m) => {
+        const actions = (m.actions || []).map((a) => {
+          // Plan stored flags may be named `enabled` or `visible` on actions; prefer `enabled` then `visible`
+          const enabled = (typeof a.enabled !== 'undefined') ? normalizeFlag(a.enabled) : (typeof a.visible !== 'undefined' ? normalizeFlag(a.visible) : false);
+          return {
+            key: a.key,
+            displayName: a.displayName || a.key,
+            enabled,
+          };
+        });
+        return {
+          moduleKey: m.moduleKey,
+          displayName: m.displayName || m.moduleKey,
+          // Treat module as visible only when it has enabled actions
+          visible: actions.some((aa) => aa.enabled),
+          actions,
+        };
+      });
 
       const planSnapshot = {
         _id: plan._id,
@@ -93,20 +128,12 @@ export default function PlanSettingsStep({ form, handleChange, plansOverride = n
         hasTax: plan.hasTax,
         taxName: plan.taxName,
         taxIncluded: plan.taxIncluded,
-        modulePermissions: plan.modulePermissions.map((mod) => ({
-          moduleKey: mod.moduleKey,
-          displayName: mod.displayName,
-          actions: mod.actions.map((a) => ({
-            key: a.key,
-            displayName: a.displayName,
-            enabled: true,
-          })),
-        })),
+        modulePermissions: merged,
       };
 
       const perms = {};
       planSnapshot.modulePermissions.forEach((mod) => {
-        perms[mod.moduleKey] = mod.actions.map((a) => a.key);
+        perms[mod.moduleKey] = mod.actions.filter((a) => a.enabled).map((a) => a.key);
       });
 
       handleChange("plan", planSnapshot);
@@ -356,7 +383,55 @@ const PlanDetailPanel = React.memo(
   ({ form, onPriceChange, onDurationChange, onMaxChange, togglePermission, toggleAll }) => {
     const [searchTerm, setSearchTerm] = useState("");
     const debouncedSearchTerm = useDebounce(searchTerm, 300); // 300ms debounce
+    const [filteredModuleKeys, setFilteredModuleKeys] = useState(null);
     const selectedPlan = form.plan;
+
+    // when user types in search, use backend search to get matching moduleKeys
+    useEffect(() => {
+      const t = setTimeout(async () => {
+        const q = (debouncedSearchTerm || '').trim();
+        if (!q) {
+          setFilteredModuleKeys(null);
+          return;
+        }
+        try {
+          const res = await api.get('/saas/module', { params: { q, page: 1, limit: 1000 } });
+          const payload = res?.data ?? res?.items ?? res;
+          const mods = Array.isArray(payload) ? payload : payload.modules || payload.items || [];
+          setFilteredModuleKeys(mods.map((m) => m.moduleKey));
+        } catch (err) {
+          console.error('Module search failed', err);
+          setFilteredModuleKeys(null);
+        }
+      }, 0);
+      return () => clearTimeout(t);
+    }, [debouncedSearchTerm]);
+
+    // Filter modules based on backend search results (if present) otherwise show all
+    const filteredModules = useMemo(() => {
+      const mods = selectedPlan?.modulePermissions || [];
+      if (!filteredModuleKeys || filteredModuleKeys.length === 0) return mods;
+      const q = (debouncedSearchTerm || '').toLowerCase();
+      return mods.filter((mod) => {
+        return filteredModuleKeys.includes(mod.moduleKey) || (mod.displayName || '').toLowerCase().includes(q);
+      });
+    }, [selectedPlan?.modulePermissions, filteredModuleKeys, debouncedSearchTerm]);
+
+    // react-window helpers (hooks must run unconditionally)
+    const FixedSizeList = RW?.FixedSizeList || RW?.default?.FixedSizeList || null;
+    const itemData = useMemo(() => ({ modules: filteredModules, togglePermission, toggleAll }), [filteredModules, togglePermission, toggleAll]);
+    const RowRenderer = useCallback(({ index, style, data }) => {
+      const mod = data.modules[index];
+      return (
+        <div style={style} key={mod.moduleKey}>
+          <ModulePermissionCard
+            mod={mod}
+            togglePermission={data.togglePermission}
+            toggleAll={data.toggleAll}
+          />
+        </div>
+      );
+    }, [togglePermission, toggleAll]);
 
     if (!selectedPlan)
       return (
@@ -364,12 +439,6 @@ const PlanDetailPanel = React.memo(
           <Typography>Select a plan to view details</Typography>
         </Paper>
       );
-
-    // Filter modules based on debounced search term
-    const filteredModules = (selectedPlan.modulePermissions || []).filter((mod) =>
-      mod.displayName?.toLowerCase().includes(debouncedSearchTerm.toLowerCase()) ||
-      mod.moduleKey?.toLowerCase().includes(debouncedSearchTerm.toLowerCase())
-    );
 
     return (
       <Paper sx={{ flexGrow: 1, p: 4, borderRadius: 3, overflowY: "auto" }}>
@@ -380,19 +449,27 @@ const PlanDetailPanel = React.memo(
         </Box>
 
         <Box display="flex" alignItems="center" sx={{ my: 3 }}>
-          <TextField
+          <RequiredTextField
+            formik={null}
+            name="pricePaise"
             label="Plan Price (₹)"
             type="number"
             value={selectedPlan.pricePaise ? selectedPlan.pricePaise / 100 : ""}
             onChange={(e) => onPriceChange(e.target.value)}
             sx={{ width: 220, mr: 2 }}
+            error={Number(selectedPlan.pricePaise || 0) < 0}
+            helperText={Number(selectedPlan.pricePaise || 0) < 0 ? 'Price cannot be negative' : ''}
           />
-          <TextField
+          <RequiredTextField
+            formik={null}
+            name="durationDays"
             label="Duration (Days)"
             type="number"
             value={selectedPlan.durationDays || ""}
             onChange={(e) => onDurationChange(e.target.value)}
             sx={{ width: 220 }}
+            error={Number(selectedPlan.durationDays || 0) < 0}
+            helperText={Number(selectedPlan.durationDays || 0) < 0 ? 'Duration cannot be negative' : ''}
           />
         </Box>
 
@@ -410,25 +487,28 @@ const PlanDetailPanel = React.memo(
         </Typography>
 
         {/* Search Bar */}
-        <TextField
-          placeholder="Search module..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          fullWidth
-          sx={{ mb: 2 }}
-          size="small"
-        />
+        <RequiredTextField formik={null} name="moduleSearch" placeholder="Search module..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} fullWidth sx={{ mb: 2 }} size="small" />
 
-        {filteredModules.map((mod) => (
-          <ModulePermissionCard
-            key={mod.moduleKey}
-            mod={mod}
-            togglePermission={togglePermission}
-            toggleAll={toggleAll}
-          />
-        ))}
-
-        {filteredModules.length === 0 && (
+        {filteredModules.length > 0 ? (
+          FixedSizeList ? (
+            <FixedSizeList
+              height={Math.min(600, filteredModules.length * 120)}
+              itemCount={filteredModules.length}
+              itemSize={120}
+              width="100%"
+              itemData={itemData}
+            >
+              {RowRenderer}
+            </FixedSizeList>
+          ) : (
+            // fallback to plain list when react-window isn't available correctly
+            <Box>
+              {filteredModules.map((mod) => (
+                <ModulePermissionCard key={mod.moduleKey} mod={mod} togglePermission={togglePermission} toggleAll={toggleAll} />
+              ))}
+            </Box>
+          )
+        ) : (
           <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
             No modules match your search.
           </Typography>
@@ -456,14 +536,8 @@ const UserLimitFields = memo(({ form, onMaxChange }) => {
   return (
     <Grid container spacing={2}>
       {fields.map(({ key, label }) => (
-        <Grid item key={key}>
-          <TextField
-            label={label}
-            type="number"
-            value={userPricing[key] ?? ""}
-            onChange={(e) => onMaxChange(key, e.target.value)}
-            sx={{ width: 220 }}
-          />
+          <Grid item key={key}>
+          <RequiredTextField formik={null} name={key} label={label} type="number" value={userPricing[key] ?? ""} onChange={(e) => onMaxChange(key, e.target.value)} sx={{ width: 220 }} />
         </Grid>
       ))}
     </Grid>
@@ -472,11 +546,16 @@ const UserLimitFields = memo(({ form, onMaxChange }) => {
 
 /* ---------------- Module Permission Card ---------------- */
 const ModulePermissionCard = React.memo(({ mod, togglePermission, toggleAll }) => {
-  const [actionsState, setActionsState] = useState(mod.actions || []);
+  const [actionsState, setActionsState] = useState(() => (mod.actions || []).map(a => ({ ...a, enabled: (a.enabled === true || a.enabled === 1 || (typeof a.enabled === 'string' && a.enabled.trim().toLowerCase() === 'true')) })));
 
-  // keep local state synced with parent updates
+  // keep local state synced with parent updates (normalize boolean-like values)
   useEffect(() => {
-    setActionsState(mod.actions || []);
+    const normalized = (mod.actions || []).map((a) => {
+      const val = a.enabled !== undefined ? a.enabled : a.visible;
+      const enabled = val === true || val === 1 || (typeof val === 'string' && val.trim().toLowerCase() === 'true');
+      return { ...a, enabled };
+    });
+    setActionsState(normalized);
   }, [mod.actions]);
 
   const handleTogglePermission = useCallback(
@@ -538,7 +617,7 @@ const ModulePermissionCard = React.memo(({ mod, togglePermission, toggleAll }) =
       </AccordionSummary>
 
       <AccordionDetails>
-        <Box sx={{ pl: 3 }}>
+        <Box sx={{ pl: 1 }}>
           {actionsState.map((action) => (
             <FormControlLabel
               key={action.key}

@@ -3,13 +3,13 @@ import {
   Box,
   Paper,
   Button,
-  TextField,
   Select,
   MenuItem,
   FormControl,
   InputLabel,
   FormHelperText,
 } from "@mui/material";
+import RequiredTextField from "../../components/form/RequiredTextField";
 import api from "../../api/axios";
 import { useNavigate, useParams } from "react-router-dom";
 import AddNewModal from "../../components/common/modals/AddNewModal";
@@ -117,9 +117,9 @@ export default function TicketForm() {
     <Box p={2}>
       <Paper sx={{ p: 2 }}>
         <form onSubmit={handleSubmit}>
-          <TextField
-            fullWidth
+          <RequiredTextField
             label="Title"
+            required
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             error={!!errors.title}
@@ -127,9 +127,9 @@ export default function TicketForm() {
             sx={{ mb: 2 }}
           />
 
-          <TextField
-            fullWidth
+          <RequiredTextField
             label="Description"
+            required
             multiline
             rows={4}
             value={description}

@@ -57,7 +57,17 @@ const SubscriptionSchema = new Schema(
 
     remainingValuePaise: { type: Number, default: 0 },
 
+    // notification flags to avoid duplicate reminder sends
+    notifications: { type: Schema.Types.Mixed, default: {} },
+
     activatedByOrderId: { type: Schema.Types.ObjectId, ref: "Order" },
+
+    // Scheduled plan change (downgrade or change) to be applied at next billing
+    scheduledChange: {
+      effectiveAt: Number,
+      requestedBy: { type: Schema.Types.ObjectId, ref: 'UserAuth' },
+      createdAt: { type: Number, default: Date.now }
+    },
 
     // NOT NEEDED
     // scheduledDowngradeTo: { type: Schema.Types.ObjectId, ref: 'Plan' },

@@ -2,6 +2,16 @@
 
 🚀 Now On Your Server 
 
+# Backend
+docker build -t keyurp0207/support-backend:latest ./support-backend
+
+# Frontend
+docker build -t keyurp0207/support-frontend:latest ./support-frontend
+
+docker push keyurp0207/support-backend:latest
+docker push keyurp0207/support-frontend:latest
+----
+
 sass-app/
 │
 ├── docker-compose.yml
@@ -11,6 +21,7 @@ Then run:
 
 docker login
 docker compose pull
+docker compose up -d
 
 //then run single time 
 1 START DOCKER DESKTOP 
@@ -20,4 +31,6 @@ GO TO ROOT LEVEL where docker compose located
 4
 docker compose up -d
 
--->
+
+//---connect to mongo using 
+<!--mongodb://localhost:27018/ -->

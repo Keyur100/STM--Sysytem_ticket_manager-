@@ -20,7 +20,8 @@ export default function BranchForm() {
     if (id) (async () => {
       try {
         const res = await api.get(endpoints.branch.get(id));
-        setForm(res || {});
+        const branch = (res && res.data) ? res.data : res;
+        if (branch) setForm(branch);
       } catch (err) { console.error(err); }
     })();
     else if (companyId) {

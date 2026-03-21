@@ -18,8 +18,13 @@ const createBranch = async (req, res) => {
 const listBranches = async (req, res) => {
   try {
     const { companyId, page = 1, limit = 50 } = req.query;
-    if (!companyId) return sendError(res, 400, 'companyId required');
-    const result = await BranchService.listBranchesByCompany(companyId, { page: Number(page), limit: Number(limit) });
+    // If companyId provided, return branches for that company; otherwise return all branches
+    let result;
+    if (companyId) {
+      result = await BranchService.listBranchesByCompany(companyId, { page: Number(page), limit: Number(limit) });
+    } else {
+      result = await BranchService.listAllBranches({ page: Number(page), limit: Number(limit) });
+    }
     return sendSuccess(res, result, 'Branches fetched');
   } catch (err) {
     console.error('Error listing branches', err);

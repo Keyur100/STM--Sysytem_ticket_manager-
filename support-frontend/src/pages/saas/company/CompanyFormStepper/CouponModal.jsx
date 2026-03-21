@@ -4,7 +4,6 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  TextField,
   Button,
   CircularProgress,
   InputAdornment,
@@ -14,6 +13,7 @@ import {
   Typography,
   Box,
 } from "@mui/material";
+import RequiredTextField from '../../../../components/form/RequiredTextField';
 import SearchIcon from "@mui/icons-material/Search";
 import api from "../../../../api/axios";
 
@@ -31,8 +31,8 @@ const CouponModal = ({ open, onClose, onSelect, companyId, planCode }) => {
       setLoading(true);
       console.log("Fetching coupons with planCode:", planCode);
       // Pass planCode as query parameter
-      const queryParam = planCode ? `?planCode=${planCode}` : "";
-      const res = await api.get(`/saas/coupons/get-perticular/${companyId}${queryParam}`);
+      const queryParam = planCode ? `?companyId=${companyId}&planCode=${planCode}` : "?companyId=" + companyId;
+      const res = await api.get(`/saas/coupons/company/${companyId}${queryParam}`);
       const allCoupons = [
         ...(res.data?.coupons || []),
         // ...(res.data?.globalCoupons || []),
@@ -65,7 +65,9 @@ const CouponModal = ({ open, onClose, onSelect, companyId, planCode }) => {
 
       <DialogContent dividers sx={{ p: 3 }}>
         {/* Search Bar */}
-        <TextField
+        <RequiredTextField
+          formik={null}
+          name="couponSearch"
           fullWidth
           variant="outlined"
           size="small"

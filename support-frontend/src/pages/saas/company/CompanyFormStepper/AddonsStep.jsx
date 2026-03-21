@@ -4,7 +4,7 @@ import {
   Card,
   CardContent,
   Typography,
-  TextField,
+  
   Button,
   Box,
   CircularProgress,
@@ -21,6 +21,7 @@ import InfoIcon from "@mui/icons-material/Info";
 import api from "../../../../api/axios";
 import Loader from "../../../../components/common/Loader";
 import usePermissions from "../../../../helpers/hooks/usePermissions";
+import RequiredTextField from '../../../../components/form/RequiredTextField';
 
 export default function AddonsStep({ form, handleChange }) {
   const theme = useTheme();
@@ -318,13 +319,13 @@ export default function AddonsStep({ form, handleChange }) {
                       <RemoveIcon fontSize="small" />
                     </Button>
 
-                    <TextField
+                    <RequiredTextField
+                      formik={null}
+                      name={`addon_${addon.value}`}
                       type="number"
                       size="small"
                       value={qty}
-                      onChange={(e) => 
-                        handleQuantityChange(addon.value, parseInt(e.target.value) || 0)
-                      }
+                      onChange={(e) => handleQuantityChange(addon.value, parseInt(e.target.value) || 0)}
                       disabled={!canBuyAddons}
                       inputProps={{ min: 0, step: 1, style: { textAlign: "center" } }}
                       sx={{ 

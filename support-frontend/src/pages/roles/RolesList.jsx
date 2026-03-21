@@ -81,6 +81,7 @@ export default function RolesList() {
     <Box p={2}>
       <Paper sx={{ p: 2 }}>
         <TableWrapper
+        headerLabel="Roles"
           data={roles}
           columns={columns}
           total={total}

@@ -143,11 +143,23 @@ const syncStep = async (req, res) => {
     } else if (step === '2') {
       const s2 = await CompanyService.getCompanySyncStep2Data(companyId);
       if (!s2) return res.status(404).json({ message: 'Company not found' });
-      payload = { plan: s2.plan || {}, orderSummary: s2.orderSummary || {}, transactions: s2.transactions || [], wallet: s2.wallet || {} };
+      payload = { company_id: s2.company_id, plan: s2.plan || {}, orderSummary: s2.orderSummary || {}, transactions: s2.transactions || [], wallet: s2.wallet || {} };
     } else if (step === '3') {
       const s3 = await CompanyService.getCompanySyncStep3Data(companyId);
       if (!s3) return res.status(404).json({ message: 'Company not found' });
-      payload = { company: s3.company, modulePermissions: s3.modulePermissions || [] };
+      payload = { company_id: s3.company_id, modulePermissions: s3.modulePermissions || [] };
+    } else if (step === '4') {
+      const s4 = await CompanyService.getCompanySyncStep4Data(companyId);
+      if (!s4) return res.status(404).json({ message: 'Company not found' });
+      payload = { company_id: s4.company_id,  };
+
+      // payload = { company_id: s4.company_id, financialYear: s4.financialYear || null, serialNumbers: s4.serialNumbers || null };
+    } else if (step === '5') {
+      const s5 = await CompanyService.getCompanySyncStep5Data(companyId);
+      if (!s5) return res.status(404).json({ message: 'Company not found' });
+      payload = { company_id: s5.company_id };
+
+      // payload = { company_id: s5.company_id, settings: s5.settings || {} };
     } else {
       return res.status(400).json({ message: 'Invalid step' });
     }
@@ -165,8 +177,8 @@ const syncStep = async (req, res) => {
       return res.status(502).json({ message: 'Remote call failed', error: err.message || String(err) });
     }
   } catch (err) {
-    console.error('syncStep error:', err);
-    return res.status(500).json({ message: 'sync step failed', error: err.message || String(err) });
+    // console.error('syncStep error:', err);
+    return res.status(500).json({ message: 'sync step failed', error: err.response?.data?.message || String(err) });
   }
 };
 
@@ -183,3 +195,25 @@ const getSyncLogs = async (req, res) => {
 };
 
 module.exports = { syncCompany, webhookHandler, syncStep, getSyncLogs };
+
+// POST /saas/company/:companyId/stats
+const companyStats = async (req, res) => {
+  try {
+    const companyKey = req.body.companyKey;
+    if (!companyKey) return res.status(400).json({ message: 'companyKey required' });
+
+    const statsUrl = process.env.COMPANY_STATS_URL || config.remoteCompanyStatsUrl || null;
+    if (!statsUrl) return res.status(500).json({ message: 'Company stats URL not configured' });
+
+    const payload = { companyKey };
+    const response = await sendSecureRequest(payload, statsUrl);
+    if (!response || !response.data) return res.status(502).json({ message: 'Invalid remote response' });
+
+    return res.status(200).json({ message: 'Company statistics retrieved', data: response.data });
+  } catch (err) {
+    console.error('companyStats error:', err);
+    return res.status(500).json({ message: 'Failed to fetch company stats', error: err.message || String(err) });
+  }
+};
+
+module.exports.companyStats = companyStats;

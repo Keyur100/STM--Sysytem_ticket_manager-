@@ -14,7 +14,7 @@ class AddonService {
   static async getAllAddons() {
     try {
       const addons = await Addon.find({ isActive: true, isDeleted: false })
-        .select('value name description pricePaise hasTax taxName taxIncluded')
+        .select('value name description pricePaise hasTax taxName taxIncluded type provides durationDays isActive')
         .lean();
       
       return {
@@ -34,7 +34,7 @@ class AddonService {
   static async getAddonById(id) {
     try {
       const addon = await Addon.findById(id)
-        .select('value name description pricePaise hasTax taxName isActive')
+        .select('-isDeleted')
         .lean();
       
       if (!addon) {
@@ -56,8 +56,21 @@ class AddonService {
    */
   static async createAddon(data, createdBy) {
     try {
+      // Ensure unique `value` per addon
+      if (!data || !data.value) throw new Error('Addon value is required');
+      const exists = await Addon.findOne({ value: data.value });
+      if (exists) throw new Error('Addon already exists with same value');
+
+      // Normalize provides: allow either object (limits) or array/object for feature modules
+      const normalized = { ...data };
+      if (normalized.type === 'feature' && Array.isArray(normalized.provides)) {
+        // keep arrays as-is (module list)
+      } else if (normalized.type === 'feature' && typeof normalized.provides === 'object') {
+        // keep object as-is
+      }
+
       const addon = await Addon.create({
-        ...data,
+        ...normalized,
         createdBy,
       });
 
@@ -77,9 +90,20 @@ class AddonService {
    */
   static async updateAddon(id, data, updatedBy) {
     try {
+      // If value is being updated, ensure uniqueness
+      if (data && data.value) {
+        const exists = await Addon.findOne({ value: data.value, _id: { $ne: id } }).lean().catch(() => null);
+        if (exists) throw new Error('Another addon with same value already exists');
+      }
+
+      const normalized = { ...data };
+      if (normalized.type === 'feature' && Array.isArray(normalized.provides)) {
+        // ok
+      }
+
       const addon = await Addon.findByIdAndUpdate(
         id,
-        { ...data, updatedBy },
+        { ...normalized, updatedBy },
         { new: true, runValidators: true }
       );
 
@@ -160,7 +184,17 @@ class AddonService {
       company.appliedAddons = company.appliedAddons || [];
       company.appliedAddons.push({ addonId: addon._id, units, status: 'ACTIVE', purchasedAt: new Date(), appliedAt: new Date(), expiresAt, paymentRef: payment._id });
       const provides = addon.provides || {};
-      for (const k of Object.keys(provides)) company[k] = (company[k] || 0) + provides[k] * units;
+      if (addon.type === 'limit') {
+        for (const k of Object.keys(provides || {})) company[k] = (company[k] || 0) + (provides[k] || 0) * units;
+      } else if (addon.type === 'feature') {
+        // for feature type, store module/feature metadata under selectedAddons keyed by addon.value
+        company.selectedAddons = company.selectedAddons || {};
+        company.selectedAddons[addon.value] = company.selectedAddons[addon.value] || {};
+        company.selectedAddons[addon.value].units = (company.selectedAddons[addon.value].units || 0) + units;
+        company.selectedAddons[addon.value].meta = addon.provides || company.selectedAddons[addon.value].meta || {};
+        company.selectedAddons[addon.value].appliedAt = new Date();
+        company.selectedAddons[addon.value].expiresAt = expiresAt;
+      }
       company.transactions = company.transactions || [];
       company.transactions.push({ type: 'ADDON_APPLIED', amountPaise, addon: addon._id, date: new Date(), payment: payment._id });
       await company.save();

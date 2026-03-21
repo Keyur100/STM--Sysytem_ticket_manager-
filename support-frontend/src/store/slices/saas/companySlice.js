@@ -1,5 +1,6 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import api from "../../../api/axios";
+import { setError } from "../../slices/uiSlice";
 import endpoints from "../../../api/saas/endpoints";
 
 /* -------------------------------
@@ -74,12 +75,16 @@ export const getCompany = createAsyncThunk(
 // ✅ Create a draft company
 export const createDraftCompany = createAsyncThunk(
   "company/createDraft",
-  async (payload, { rejectWithValue }) => {
+  async (payload, { rejectWithValue, dispatch }) => {
     try {
       const res = await api.post("/saas/company/draft", payload);
       return res.data || {};
     } catch (error) {
-      return rejectWithValue(error.response?.data || "Failed to create draft company");
+      const server = error.response?.data;
+      const message = server?.error || server?.message || JSON.stringify(server) || error.message || 'Failed to create draft company';
+      // push to global UI
+      try { dispatch(setError(message)); } catch (e) { /* ignore */ }
+      return rejectWithValue({ message, server });
     }
   }
 );
@@ -87,12 +92,15 @@ export const createDraftCompany = createAsyncThunk(
 // ✅ Signup company (signing up a company)
 export const signupCompany = createAsyncThunk(
   "company/signup",
-  async (payload, { rejectWithValue }) => {
+  async (payload, { rejectWithValue, dispatch }) => {
     try {
       const res = await api.post("/saas/company/signup", payload);
       return res.data || {};
     } catch (error) {
-      return rejectWithValue(error.response?.data || "Failed to sign up company");
+      const server = error.response?.data;
+      const message = server?.error || server?.message || JSON.stringify(server) || error.message || 'Failed to sign up company';
+      try { dispatch(setError(message)); } catch (e) { }
+      return rejectWithValue({ message, server });
     }
   }
 );

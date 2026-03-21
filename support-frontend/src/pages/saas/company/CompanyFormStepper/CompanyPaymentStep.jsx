@@ -4,7 +4,7 @@ import {
   Typography,
   Card,
   CardContent,
-  TextField,
+  
   Button,
   RadioGroup,
   FormControlLabel,
@@ -23,6 +23,7 @@ import {
 import api from "../../../../api/axios";
 import Loader from "../../../../components/common/Loader";
 import CouponModal from "./CouponModal";
+import RequiredTextField from '../../../../components/form/RequiredTextField';
 export default function CompanyPaymentStep({ form, onPaymentReady }) {
   const theme = useTheme();
   const [walletBalance, setWalletBalance] = useState(0);
@@ -125,6 +126,9 @@ export default function CompanyPaymentStep({ form, onPaymentReady }) {
         planCode: plan.code,
         amountPaise: totalAmountPaise,
       });
+      if (res.data && res.data.success === false) {
+        throw new Error(res.data.message || 'Coupon apply failed');
+      }
       const discountPaise = res.data.discountPaise || 0;
       setDiscountAmount(discountPaise / 100);
       setCouponCode(appliedCode);
@@ -132,7 +136,7 @@ export default function CompanyPaymentStep({ form, onPaymentReady }) {
     } catch (err) {
       setAlertMsg({
         type: "error",
-        text: err.response?.data?.message || "Invalid or expired coupon",
+        text: err.message || err.response?.data?.message || "Invalid or expired coupon",
       });
     } finally {
       setLoading(false);
@@ -264,8 +268,12 @@ export default function CompanyPaymentStep({ form, onPaymentReady }) {
         ? `/saas/wallet/topup/${form._id}` 
         : `/saas/wallet/deduct/${form._id}`;
 
-      await api.post(endpoint, { amountPaise: amountInPaise });
-      
+      const res = await api.post(endpoint, { amountPaise: amountInPaise });
+      if (res.data && res.data.success === false) {
+        setSnackbar({ open: true, message: res.data.message || 'Action failed', severity: 'error' });
+        return;
+      }
+
       setSnackbar({ 
         open: true, 
         message: `Balance ${walletDialogMode === "add" ? "added" : "deducted"} successfully!`, 
@@ -539,15 +547,17 @@ export default function CompanyPaymentStep({ form, onPaymentReady }) {
             {walletDialogMode === "add" ? "Add Balance" : "Deduct Balance"}
           </DialogTitle>
           <DialogContent>
-            <TextField
-              label="Amount (₹)"
-              fullWidth
-              margin="dense"
-              type="number"
-              value={walletAmount}
-              onChange={(e) => setWalletAmount(e.target.value)}
-              sx={{ mt: 1 }}
-            />
+              <RequiredTextField
+                formik={null}
+                name="walletAmount"
+                label="Amount (₹)"
+                fullWidth
+                margin="dense"
+                type="number"
+                value={walletAmount}
+                onChange={(e) => setWalletAmount(e.target.value)}
+                sx={{ mt: 1 }}
+              />
           </DialogContent>
           <DialogActions sx={{ justifyContent: "space-between", px: 3, pb: 2 }}>
             <Button onClick={() => { setWalletDialogOpen(false); setWalletAmount(""); }}>

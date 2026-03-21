@@ -26,7 +26,12 @@ class CouponService {
     const companyId = q.companyId || null;
 
     const filter = {};
-    if (companyId) filter.companyId = companyId;
+    if (companyId) {
+      // support legacy `companyId` or new `companyIds` array
+      filter.$or = [
+        { companyId },
+        {companyId: null}, // include global coupons when filtering by company];
+    ]}
 
     // planCode filter: coupons with no restriction OR include this planCode
     if (planCode) {
@@ -49,7 +54,7 @@ class CouponService {
       .lean();
 
     // add scope for frontend convenience
-    const mapped = (coupons || []).map(c => ({ ...c, scope: c.companyId ? 'Company' : 'Global' }));
+    const mapped = (coupons || []).map(c => ({ ...c, scope: (c.companyId || (c.companyIds && c.companyIds.length)) ? 'Company' : 'Global' }));
 
     return { coupons: mapped, total, page, limit };
   }
@@ -59,8 +64,8 @@ class CouponService {
 
     const coupons = await Coupon.find(filter).sort({ createdAt: -1 });
 
-    const globalCoupons = coupons.filter(c => !c.companyId);
-    const companyCoupons = coupons.filter(c => c.companyId);
+    const globalCoupons = coupons.filter(c => !(c.companyId || (c.companyIds && c.companyIds.length)));
+    const companyCoupons = coupons.filter(c => (c.companyId || (c.companyIds && c.companyIds.length)));
 
     return { globalCoupons, companyCoupons };
   }
@@ -74,6 +79,12 @@ class CouponService {
     if (payload.discountType && payload.discountType !== CouponType.PERCENT && payload.discountValue !== undefined) {
       payload.discountValue = Math.round(Number(payload.discountValue || 0) * 100);
     }
+    // If coupon code is being updated, ensure uniqueness
+    if (payload.code) {
+      const exists = await Coupon.findOne({ code: payload.code, _id: { $ne: id } }).lean().catch(() => null);
+      if (exists) throw new Error('Another coupon with same code already exists');
+    }
+
     return Coupon.findByIdAndUpdate(
       id,
       { ...payload, updatedBy: userId },
@@ -87,7 +98,7 @@ class CouponService {
     return doc.deleteOne();
   }
 
-  static async validateAndApply(code, planCode, amountPaise) {
+  static async validateAndApply(code, planCode, amountPaise, companyId = null) {
     const now = Date.now();
     const coupon = await Coupon.findOne({
       code: String(code || ""),
@@ -114,6 +125,15 @@ class CouponService {
       (!planCode || !coupon.eligiblePlanCodes.includes(planCode))
     ) {
       throw new Error("Coupon not valid for this plan");
+    }
+
+    // Company-scoped validation: if coupon targets specific company(s), ensure request provides matching companyId
+    if ((coupon.companyId || (coupon.companyIds && coupon.companyIds.length))) {
+      // require companyId to be provided
+      if (!companyId) throw new Error("Coupon not valid for this company");
+      const companyMatch = (coupon.companyId && String(coupon.companyId) === String(companyId))
+        || (coupon.companyIds && coupon.companyIds.map(String).includes(String(companyId)));
+      if (!companyMatch) throw new Error("Coupon not valid for this company");
     }
 
     let discountPaise = 0;

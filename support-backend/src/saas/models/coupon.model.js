@@ -11,7 +11,9 @@ const CouponSchema = new Schema({
   validFrom: Number,
   validTo: Number,
 
-  companyId: { type: Schema.Types.ObjectId, ref: 'Company', required: false }, // optional, if company-specific
+  // optional: single company (legacy) or multiple companies
+  companyId: { type: Schema.Types.ObjectId, ref: 'Company', required: false }, // DEPRECATED: legacy single-company field
+  companyIds: [{ type: Schema.Types.ObjectId, ref: 'Company' }], // prefer this for multi-company scope
   createdBy: { type: Schema.Types.ObjectId, ref: 'UserAuth' },
   isSystem: { type: Boolean, default: false, index: true },
   // UPDATED

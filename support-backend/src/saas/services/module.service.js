@@ -41,8 +41,8 @@ class ModuleService {
     if (search) {
       filter.$or = [
         { group: new RegExp(search, "i") },
-        // { moduleKey: new RegExp(search, "i") },
-        // { displayName: new RegExp(search, "i") },
+        { moduleKey: new RegExp(search, "i") },
+        { displayName: new RegExp(search, "i") },
       ];
     }
 
@@ -72,6 +72,12 @@ class ModuleService {
   static async updateModule(id, data, userId) {
     const oldModule = await Module.findById(id);
     if (!oldModule) throw new Error("Module not found");
+
+    // If moduleKey is changing, ensure uniqueness
+    if (data && data.moduleKey && data.moduleKey !== oldModule.moduleKey) {
+      const exists = await Module.findOne({ moduleKey: data.moduleKey, _id: { $ne: id } }).lean().catch(() => null);
+      if (exists) throw new Error('Another module with same moduleKey already exists');
+    }
 
     const updatedModule = await Module.findByIdAndUpdate(
       id,

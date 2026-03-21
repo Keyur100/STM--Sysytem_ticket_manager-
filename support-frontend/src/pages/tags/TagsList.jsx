@@ -46,6 +46,7 @@ export default function TagsList() {
     <Box p={2}>
       <Paper sx={{ p: 2 }}>
         <TableWrapper
+          headerLabel="Tags"
           data={tags}
           columns={columns}
           total={total}

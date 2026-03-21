@@ -56,8 +56,8 @@ services:
   mongo:
     image: mongo:7.0
     container_name: mongo
-    # ports:
-    #   - "27018:27017"       # Host 27018 → Container 27017 (remove while push to docker hub)
+    ports:
+      - "27018:27017"       # Host 27017 → Container 27018 (remove while push to docker hub)
     restart: unless-stopped
     volumes:
       - mongo_data:/data/db

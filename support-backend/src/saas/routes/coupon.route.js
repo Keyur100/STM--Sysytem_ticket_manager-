@@ -61,7 +61,8 @@ const couponController = require('../controllers/coupon.controller');
 const authJwt = require('../../middlewares/authJwt');
 const tryCatch = require('../../middlewares/tryCatch');
 
-router.get('/get-perticular/:companyId', authJwt, tryCatch(couponController.getAll));
+// Fetch coupons related to a specific company (optional filters via query)
+router.get('/company/:companyId', authJwt, tryCatch(couponController.getAll));
 router.post('/', authJwt, tryCatch(couponController.create));
 // List coupons with pagination/search/sort (supports optional planCode/companyId)
 router.get('/', authJwt, tryCatch(couponController.getAll));

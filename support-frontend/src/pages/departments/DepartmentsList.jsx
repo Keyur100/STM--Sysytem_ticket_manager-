@@ -27,18 +27,18 @@ export default function DepartmentsList() {
   return (
     <Box p={2}>
       <Paper sx={{ p: 2 }}>
-        <Box display="flex" justifyContent="space-between">
-          <h3>Departments</h3>
-          {hasPermission("department.create") && <Button component={Link} to="/departments/new">Add new</Button>}
-        </Box>
 
         <TableWrapper
+          headerLabel="Departments"
           data={depts.items}
           columns={columns}
           onEdit={(r) => nav(`/departments/${r._id}/edit`)}
           onDelete={handleDelete}
           editPerm="department.update"
           deletePerm="department.delete"
+          onAdd={{ fn: () => nav("/departments/new"), perm: "department.create" }}
+          addLabel="Add Department"
+
         />
       </Paper>
     </Box>

@@ -22,13 +22,3 @@ const PaymentSchema = new Schema({
 PaymentSchema.index({ company: 1, status: 1 });
 
 module.exports = mongoose.model('Payment', PaymentSchema);
-
-// Actual Price (Original Price)
-
-// Subtract Coupon Discount
-
-// Subtract Wallet Balance
-
-// Store the Final Amount the user has to pay.
-
-// tax , vurrency in INR

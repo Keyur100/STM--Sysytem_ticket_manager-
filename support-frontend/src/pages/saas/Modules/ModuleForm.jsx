@@ -3,7 +3,7 @@ import {
   Box,
   Paper,
   Button,
-  TextField,
+  
   FormControlLabel,
   Switch,
   Grid,
@@ -26,6 +26,7 @@ import { Add as AddIcon, Delete as DeleteIcon } from "@mui/icons-material";
 import api from "../../../api/axios";
 import { useNavigate, useParams } from "react-router-dom";
 import usePermissions from "../../../helpers/hooks/usePermissions";
+import RequiredTextField from '../../../components/form/RequiredTextField';
 
 const schema = yup.object({
   moduleKey: yup
@@ -135,40 +136,15 @@ export default function ModuleForm() {
           <Grid container spacing={2}>
             {/* Basic Info */}
             <Grid item xs={12} sm={6}>
-              <TextField
-                name="moduleKey"
-                label="Module Key"
-                fullWidth
-                value={form.values.moduleKey}
-                onChange={form.handleChange}
-                error={!!form.errors.moduleKey}
-                helperText={form.errors.moduleKey || "e.g., ticket_management"}
-                disabled={!isNew}
-              />
+              <RequiredTextField formik={form} name="moduleKey" label="Module Key" fullWidth helperText={(form.touched.moduleKey && form.errors.moduleKey) || "e.g., ticket_management"} disabled={!isNew} />
             </Grid>
 
             <Grid item xs={12} sm={6}>
-              <TextField
-                name="displayName"
-                label="Display Name"
-                fullWidth
-                value={form.values.displayName}
-                onChange={form.handleChange}
-                error={!!form.errors.displayName}
-                helperText={form.errors.displayName || "e.g., Ticket Management"}
-              />
+              <RequiredTextField formik={form} name="displayName" label="Display Name" fullWidth helperText={(form.touched.displayName && form.errors.displayName) || "e.g., Ticket Management"} />
             </Grid>
 
             <Grid item xs={12} sm={6}>
-              <TextField
-                name="group"
-                label="Group"
-                fullWidth
-                value={form.values.group}
-                onChange={form.handleChange}
-                error={!!form.errors.group}
-                helperText={form.errors.group || "e.g., Ticketing"}
-              />
+              <RequiredTextField formik={form} name="group" label="Group" fullWidth helperText={(form.touched.group && form.errors.group) || "e.g., Ticketing"} />
             </Grid>
 
             <Grid item xs={12} sm={6}>
@@ -193,25 +169,11 @@ export default function ModuleForm() {
 
             {/* Add Action */}
             <Grid item xs={12} sm={5}>
-              <TextField
-                label="Action Key"
-                fullWidth
-                size="small"
-                value={actionKey}
-                onChange={(e) => setActionKey(e.target.value)}
-                placeholder="e.g., create, read, update"
-              />
+              <RequiredTextField formik={null} name="actionKey" label="Action Key" fullWidth size="small" value={actionKey} onChange={(e) => setActionKey(e.target.value)} placeholder="e.g., create, read, update" />
             </Grid>
 
             <Grid item xs={12} sm={5}>
-              <TextField
-                label="Action Label"
-                fullWidth
-                size="small"
-                value={actionLabel}
-                onChange={(e) => setActionLabel(e.target.value)}
-                placeholder="e.g., Create Ticket"
-              />
+              <RequiredTextField formik={null} name="actionLabel" label="Action Label" fullWidth size="small" value={actionLabel} onChange={(e) => setActionLabel(e.target.value)} placeholder="e.g., Create Ticket" />
             </Grid>
 
             <Grid item xs={12} sm={2}>

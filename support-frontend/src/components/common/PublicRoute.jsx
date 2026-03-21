@@ -13,7 +13,7 @@ export default function PublicRoute({ children }) {
   const firstPermitted = useMemo(() => {
     if (!auth?.user) return null;
 
-    if (hasPermission("*")) return "/dashboard"; // superadmin default
+    if (hasPermission("*")) return "/companies"; // superadmin default
 
     const route = routesConfig.find((r) => hasPermission(r.permission));
     return route ? route.path : null;
@@ -21,7 +21,7 @@ export default function PublicRoute({ children }) {
 
   // If user is logged in, redirect to their first permitted route
   if (auth?.user && Object.keys(auth?.user).length>0) {
-    return <Navigate to={firstPermitted || "/dashboard"} replace />;
+    return <Navigate to={firstPermitted || "/companies"} replace />;
   }
 
   return children;

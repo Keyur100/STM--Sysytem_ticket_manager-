@@ -62,6 +62,23 @@ const CompanySchema = new Schema(
     // copy of the plan (price, modulePermissions, enabled flags) and must be
     // used for billing/permission decisions instead of the canonical plan doc.
     planSnapshot: Schema.Types.Mixed,
+    // Short code (unique/optional) for the company (e.g. tenant code)
+    code: { type: String, index: true, sparse: true },
+    // Store addons selected by the company as a lightweight map
+    // e.g. { "extra_users": 2, "storage_mb": 5120 }
+    selectedAddons: { type: Schema.Types.Mixed, default: {} },
+    // Selected branches map and metadata
+    selectedBranches: { type: Schema.Types.Mixed, default: {} },
+    // Effective user limits computed from plan + active addons (e.g., { max_employees: 12, storageMB: 1024 })
+    effectiveUserLimits: { type: Schema.Types.Mixed, default: {} },
+    // Tax settings for company-level tax config
+    taxSettings: {
+      taxName: { type: String, default: 'GST' },
+      percentage: { type: Number, default: 18 },
+      taxIncluded: { type: Boolean, default: true },
+    },
+    // Generic settings holder: financial year, serial numbers, general settings
+    // settings: { type: Schema.Types.Mixed, default: {} },
   },
   { timestamps: true }
 );
@@ -69,3 +86,17 @@ const CompanySchema = new Schema(
 CompanySchema.index({ name: 1, isDeleted: 1 });
 
 module.exports = mongoose.model("Company", CompanySchema);
+
+// [
+// "companies",
+// "orders",
+// "subscriptions",
+// "wallets",
+// "wallettransactions",
+// "payments",
+// "audittrails",
+// "branches",
+// "clientusers",
+// "synclogs",
+// "transactions"
+// ].forEach(c => db[c].deleteMany({}))

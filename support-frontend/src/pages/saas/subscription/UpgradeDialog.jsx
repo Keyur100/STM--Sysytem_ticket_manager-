@@ -44,7 +44,7 @@ export default function UpgradeDialog({ open, subscription, company, onClose, on
       setLoadingPlans(true);
       const res = await api.get("/saas/plan");
       const payload = res?.data ?? res?.plans ?? res?.items ?? res ?? [];
-      const plansList = Array.isArray(payload) ? payload : payload.items || payload.data || [];
+      const plansList = Array.isArray(payload) ? payload : payload.plans || payload.items || payload.data || [];
       const filtered = (plansList || []).filter(
         (p) => (p.pricePaise || p.price || 0) > (subscription?.planSnapshot?.pricePaise || 0)
       );
@@ -101,7 +101,7 @@ export default function UpgradeDialog({ open, subscription, company, onClose, on
         useWallet: paymentData?.useWallet || false,
       };
 
-      const res = await api.post(`/subscriptions/${subscription._id}/upgrade`, payload);
+      const res = await api.post(`/saas/company/subscriptions/${subscription.subscriptionId}/upgrade`, payload);
       // api returns already-unwrapped response object { success, message, data }
       if (res && res.success) {
         onSuccess?.();

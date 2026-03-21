@@ -62,16 +62,11 @@ export default function PlanList() {
   return (
     <Box p={2}>
       <Paper sx={{ p: 2 }}>
-        <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-          <h3 style={{ margin: 0 }}>Plans</h3>
-          {hasPermission('saas.plan_create') && (
-            <Button component={Link} to="/plans/new" variant="contained">Add Plan</Button>
-          )}
-        </Box>
 
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
         <TableWrapper
+          headerLabel="Plans"
           data={plans}
           columns={columns}
           total={total}

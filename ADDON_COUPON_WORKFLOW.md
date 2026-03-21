@@ -60,11 +60,11 @@ form.selectedAddons = {
 ## 3. Coupon Filtering by PlanGroup
 
 ### Before (Global Coupons Only)
-- API: `/saas/coupons/get-perticular/:companyId`
+- API: `/saas/coupons/company/:companyId`
 - Result: All coupons regardless of plan
 
 ### After (Plan-Specific Coupons)
-- API: `/saas/coupons/get-perticular/:companyId?planGroup=BASIC`
+- API: `/saas/coupons/company/:companyId?planGroup=BASIC`
 - Result: Only coupons applicable to selected plan group
 
 ### Data Flow
@@ -153,7 +153,7 @@ Company coupons found: 2
 - **Fields**: value, name, description, pricePaise, hasTax, taxName
 
 ### Get Coupons (Plan-Specific)
-- **GET** `/saas/coupons/get-perticular/:companyId?planGroup=BASIC`
+- **GET** `/saas/coupons/company/:companyId?planGroup=BASIC`
 - **Response**: `{ globalCoupons: [...], companyCoupons: [...] }`
 - **Filters**: By planGroup if provided
 

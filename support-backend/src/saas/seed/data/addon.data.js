@@ -14,6 +14,7 @@ const addonData = [
     isSystem: true,
     isActive: true,
     isDeleted: false,
+    type:"limit"
   },
   {
     value: "max_branch",
@@ -26,6 +27,7 @@ const addonData = [
     isSystem: true,
     isActive: true,
     isDeleted: false,
+    type:"limit"
   },
   {
     value: "max_reseller",
@@ -38,6 +40,7 @@ const addonData = [
     isSystem: true,
     isActive: true,
     isDeleted: false,
+    type:"limit"
   },
   {
     value: "max_customers",
@@ -50,6 +53,7 @@ const addonData = [
     isSystem: true,
     isActive: true,
     isDeleted: false,
+    type:"limit"
   },
   {
     value: "max_suppliers",
@@ -62,6 +66,7 @@ const addonData = [
     isSystem: true,
     isActive: true,
     isDeleted: false,
+    type:"limit"
   },
   {
     value: "storageMB",
@@ -74,6 +79,7 @@ const addonData = [
     isSystem: true,
     isActive: true,
     isDeleted: false,
+    type:"limit"
   },
 ];
 

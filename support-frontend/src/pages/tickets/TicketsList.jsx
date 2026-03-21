@@ -162,6 +162,7 @@ export default function TicketsList() {
         </Box>
 
         <TableWrapper
+        headerLabel="Tickets"
           data={tickets}
           columns={columns}
           onEdit={(r) => nav(`/tickets/${r._id}`)}

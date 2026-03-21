@@ -69,14 +69,9 @@ export default function CouponList() {
   return (
     <Box p={2}>
       <Paper sx={{ p: 2 }}>
-        <Box display="flex" justifyContent="space-between">
-          <h3>Coupons</h3>
-          {hasPermission("saas.coupon_create") && (
-            <Button component={Link} to="/coupons/new">Add new</Button>
-          )}
-        </Box>
 
         <TableWrapper
+        headerLabel="Coupons"
           data={coupons}
           columns={columns}
           total={total}

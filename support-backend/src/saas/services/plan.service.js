@@ -15,6 +15,11 @@ class PlanService {
    * Create a new plan
    */
   static async createPlan(data, userId) {
+    // Ensure unique plan code
+    if (!data.code) throw new Error('Plan code is required');
+    const exists = await Plan.findOne({ code: data.code }).lean().catch(() => null);
+    if (exists) throw new Error('Plan already exists with same code');
+
     const plan = new Plan({ ...data, createdBy: userId, updatedBy: userId });
     await plan.save();
 
@@ -42,6 +47,12 @@ class PlanService {
   static async updatePlan(planId, data, userId) {
     const oldPlan = await Plan.findById(planId);
     if (!oldPlan) throw new Error('Plan not found');
+
+    // If code is changing, ensure uniqueness
+    if (data && data.code && data.code !== oldPlan.code) {
+      const exists = await Plan.findOne({ code: data.code, _id: { $ne: planId } }).lean().catch(() => null);
+      if (exists) throw new Error('Another plan with same code already exists');
+    }
 
     const updatedPlan = await Plan.findByIdAndUpdate(planId, { ...data, updatedBy: userId }, { new: true });
 

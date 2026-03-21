@@ -18,6 +18,7 @@ import {
   OutlinedInput,
   Stack,
 } from "@mui/material";
+import RequiredTextField from '../../../components/form/RequiredTextField';
 import { useFormik } from "formik";
 import * as yup from "yup";
 import api from "../../../api/axios";
@@ -92,11 +93,11 @@ export default function CouponForm() {
       maxDiscountPaise: "",
       minSpendPaise: 0,
       maxUses: "",
-      companyId: "",
+      companyIds: [],
       validFrom: Date.now(),
       validTo: Date.now() + 30 * 24 * 60 * 60 * 1000,
       isActive: true,
-      appliesTo: "PLAN",
+      
       eligiblePlanCodes: [],
       isSystem: false,
     },
@@ -120,7 +121,7 @@ export default function CouponForm() {
               ? Math.round(Number(values.minSpendPaise) * 100)
               : 0,
             maxUses: values.maxUses ? Number(values.maxUses) : null,
-            companyId: values.companyId || null,
+            companyIds: values.companyIds && values.companyIds.length ? values.companyIds : [],
           };
 
         if (isNew) {
@@ -155,7 +156,10 @@ export default function CouponForm() {
             if (uiValues.minSpendPaise !== undefined && uiValues.minSpendPaise !== null) {
               uiValues.minSpendPaise = uiValues.minSpendPaise / 100;
             }
-            form.setValues(uiValues);
+            // normalize company ids for the multi-select UI
+            uiValues.companyIds = data.companyIds && data.companyIds.length ? data.companyIds : (data.companyId ? [data.companyId] : []);
+            // ensure fields expected by the form exist
+            form.setValues({ ...form.initialValues, ...uiValues });
             setLoading(false);
         })
         .catch(() => {
@@ -228,17 +232,7 @@ export default function CouponForm() {
               <Divider sx={{ my: 2 }} />
 
               <Stack spacing={2}>
-                <TextField
-                  name="code"
-                  label="Coupon Code"
-                  fullWidth
-                  value={form.values.code}
-                  onChange={form.handleChange}
-                  onBlur={form.handleBlur}
-                  error={form.touched.code && Boolean(form.errors.code)}
-                  helperText={form.touched.code && form.errors.code}
-                  disabled={!isNew}
-                />
+                <RequiredTextField formik={form} name="code" label="Coupon Code" required disabled={!isNew} />
 
                 <TextField
                   name="description"
@@ -272,7 +266,7 @@ export default function CouponForm() {
 
               <Stack spacing={2}>
                 <FormControl fullWidth>
-                  <InputLabel>Discount Type</InputLabel>
+                  <InputLabel>Discount Type *</InputLabel>
                   <Select
                     name="discountType"
                     value={form.values.discountType}
@@ -284,17 +278,7 @@ export default function CouponForm() {
                   </Select>
                 </FormControl>
 
-                <TextField
-                  name="discountValue"
-                  label="Discount Value"
-                  type="number"
-                  fullWidth
-                  value={form.values.discountValue}
-                  onChange={form.handleChange}
-                  onBlur={form.handleBlur}
-                  error={form.touched.discountValue && Boolean(form.errors.discountValue)}
-                  helperText={form.touched.discountValue && form.errors.discountValue}
-                />
+                <RequiredTextField formik={form} name="discountValue" label="Discount Value" required type="number" />
 
                 {form.values.discountType === "percentage" && (
                   <TextField
@@ -376,29 +360,25 @@ export default function CouponForm() {
               <Divider sx={{ my: 2 }} />
 
               <Stack spacing={2}>
-                <FormControl fullWidth>
-                  <InputLabel>Applies To</InputLabel>
-                  <Select
-                    name="appliesTo"
-                    value={form.values.appliesTo}
-                    onChange={form.handleChange}
-                    label="Applies To"
-                  >
-                    <MenuItem value="PLAN">Plans Only</MenuItem>
-                    <MenuItem value="ADDON">Add-ons Only</MenuItem>
-                    <MenuItem value="ALL">All</MenuItem>
-                  </Select>
-                </FormControl>
+                {/* 'Applies To' removed - coupons are now scoped by eligible plans or company */}
 
                 <FormControl fullWidth>
-                  <InputLabel>Company</InputLabel>
+                  <InputLabel>Companies (leave empty for Global)</InputLabel>
                   <Select
-                    name="companyId"
-                    value={form.values.companyId}
-                    onChange={form.handleChange}
-                    label="Company"
+                    multiple
+                    name="companyIds"
+                    value={form.values.companyIds}
+                    onChange={(e) => form.setFieldValue('companyIds', e.target.value)}
+                    input={<OutlinedInput label="Companies (leave empty for Global)" />}
+                    renderValue={(selected) => (
+                      <Stack direction="row" spacing={1} flexWrap="wrap">
+                        {selected.map((id) => {
+                          const company = companies.find((c) => c._id === id) || {};
+                          return <Chip key={id} label={company.name || company.email || id} size="small" color="primary" />;
+                        })}
+                      </Stack>
+                    )}
                   >
-                    <MenuItem value="">Global</MenuItem>
                     {companies.map((c) => (
                       <MenuItem key={c._id} value={c._id}>
                         {c.name || c.email || c._id}

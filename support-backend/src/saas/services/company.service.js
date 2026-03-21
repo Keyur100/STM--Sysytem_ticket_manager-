@@ -21,8 +21,50 @@ const addonModel = require("../models/addon.model");
 const { CouponType } = require("../constants/coupon.constant");
 const branchModel = require('../models/branch.model');
 const clientUserModel = require('../models/clientUser.model');
+const { formatDate } = require("../utils/date.util");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+async function loadCompanyPlanSnapshot(companyId) {
+  if (!companyId) return null;
+  const c = await Company.findById(companyId).lean().catch(() => null);
+  if (!c) return null;
+  if (c.planSnapshot && Object.keys(c.planSnapshot || {}).length) return c.planSnapshot;
+  return null;
+}
+
+async function resolvePlanForOrder(order) {
+  if (!order) return null;
+  const planItem = (order.items || []).find(i => i.type === 'plan');
+  if (!planItem) return null;
+
+  // Prefer company-specific planSnapshot when available
+  const companySnapshot = await loadCompanyPlanSnapshot(order.companyId);
+  if (companySnapshot) return companySnapshot;
+
+  // Fallback to canonical plan
+  return await planModel.findById(planItem.itemId);
+}
+
+async function ensureUniqueCompanyFields(payload, excludeId = null) {
+  // Check uniqueness for fields indexed/sparse in Company schema
+  const checks = [];
+  if (payload.code) checks.push({ code: payload.code });
+  if (payload.url) checks.push({ url: payload.url });
+  if (payload.panNo) checks.push({ panNo: payload.panNo });
+  if (payload.gstNumber) checks.push({ gstNumber: payload.gstNumber });
+  if (payload.contact && payload.contact.email) checks.push({ 'contact.email': payload.contact.email.toLowerCase() });
+
+  for (const q of checks) {
+    const filter = { ...q };
+    if (excludeId) filter._id = { $ne: excludeId };
+    const exists = await Company.findOne(filter).lean().catch(() => null);
+    if (exists) {
+      const key = Object.keys(q)[0];
+      throw new Error(`Company already exists with same ${key}`);
+    }
+  }
+}
 
 function calculateSubscriptionExpiry(plan, startAt) {
   if (!plan) throw new Error("Plan required to calculate expiry");
@@ -72,10 +114,15 @@ async function activateSubscriptionIfEligible(order) {
   const planItem = order.items.find(i => i.type === "plan");
   if (!planItem) throw new Error("Paid order missing plan item");
 
-  const plan = await planModel.findById(planItem.itemId);
-  if (!plan) throw new Error("Plan not found for paid order");
-
   const now = Date.now();
+
+  // Prefer company-specific planSnapshot where available (company may have
+  // a customized snapshot). Fallback to canonical plan document.
+  let plan = await loadCompanyPlanSnapshot(order.companyId);
+  if (!plan) {
+    plan = await planModel.findById(planItem.itemId);
+  }
+  if (!plan) throw new Error("Plan not found for paid order");
 
   // Take intended start from order (for renewal/reactivation), else now
   const startAt = order.meta?.intendedStartAt || now;
@@ -104,18 +151,29 @@ async function activateSubscriptionIfEligible(order) {
   }
 
   /* =========================
-     COLLECT ADDONS FROM ORDER
+     COLLECT ADDONS FROM ORDER (include addon provides & duration)
   ========================= */
-  const addonSnapshots = order.items
-    .filter(i => i.type === "addon")
-    .map(i => ({
-      addonId: i.itemId,
-      name: i.name,
-      qty: i.qty,
-      pricePaise: i.priceAtPurchasePaise,
-      hasTax: i.taxConfig?.hasTax || false,
-      value: i.value || null
-    }));
+  const addonItems = order.items.filter(i => i.type === "addon");
+  const addonSnapshots = [];
+  for (const it of addonItems) {
+    const addonDoc = await addonModel.findById(it.itemId).lean().catch(() => null);
+    const qty = it.qty || 1;
+    const start = Date.now();
+    const end = addonDoc && addonDoc.durationDays ? start + (addonDoc.durationDays * DAY_MS) : null;
+    addonSnapshots.push({
+      addonId: it.itemId,
+      name: it.name,
+      value: it.value || (addonDoc && addonDoc.value) || null,
+      qty,
+      pricePaise: it.priceAtPurchasePaise,
+      hasTax: it.taxConfig?.hasTax || (addonDoc && addonDoc.hasTax) || false,
+      provides: addonDoc?.provides || null,
+      type: addonDoc?.type || 'limit',
+      durationDays: addonDoc?.durationDays || null,
+      startAt: start,
+      endAt: end,
+    });
+  }
 
   // If renewal/reactivation and no addons in order, carry old ones
   if (
@@ -177,6 +235,23 @@ async function activateSubscriptionIfEligible(order) {
     { $set: { subscriptionId: subscription._id } }
   );
 
+  // Build selectedAddons map from subscription addonSnapshot
+  const selectedAddonsMap = {};
+  (subscription.addonSnapshot || []).forEach(a => {
+    if (a && a.value) selectedAddonsMap[a.value] = (selectedAddonsMap[a.value] || 0) + (a.qty || 1);
+  });
+
+  // Compute effective user limits = plan.userPricing + sum(addon.provides * qty)
+  const effectiveLimits = { ...(plan.userPricing || {}) };
+  (subscription.addonSnapshot || []).forEach((a) => {
+    if (a && a.provides && typeof a.provides === 'object') {
+      for (const k of Object.keys(a.provides)) {
+        const addVal = Number(a.provides[k] || 0) * Number(a.qty || 1);
+        effectiveLimits[k] = (Number(effectiveLimits[k] || 0) + addVal);
+      }
+    }
+  });
+
   // Update company
   await Company.updateOne(
     { _id: order.companyId },
@@ -186,7 +261,9 @@ async function activateSubscriptionIfEligible(order) {
         activeSubscriptionId: subscription._id,
         planId: plan._id,
         planSnapshot: subscription.planSnapshot,
-        modulePermissionsSnapshot: plan.modulePermissions || {}
+        modulePermissionsSnapshot: plan.modulePermissions || {},
+        selectedAddons: selectedAddonsMap,
+        effectiveUserLimits: effectiveLimits,
       }
     },
     {  }
@@ -201,6 +278,9 @@ class CompanyService {
     // if (!name || !contact || !contact.email) {
     //   throw new Error("Name and Contact Email are required");
     // }
+    // Validate uniqueness of key fields
+    await ensureUniqueCompanyFields(payload);
+
     const company = await Company.create({
       name: payload?.name || "Untitled Company",
       url: payload?.url || '',
@@ -212,7 +292,10 @@ class CompanyService {
       createdBy,
       updatedBy: createdBy,
       activeSubscriptionId: null,
-      planSnapshot:payload?.plan || null,
+      planSnapshot: payload?.plan || null,
+      code: payload?.code || (payload?.name ? String(payload.name).replace(/\s+/g, '').toUpperCase() : null),
+      selectedAddons: payload?.selectedAddons || {},
+      settings: payload?.settings || {},
     });
     //  SAFE CHECK (idempotent)
     let wallet = await walletModel.findOne({ company: company._id });
@@ -242,10 +325,13 @@ class CompanyService {
 
   /** ✅ Step 2 — Update Company Info or Bank */
   static async updateCompany(companyId, payload, updatedBy) {
+    // Ensure uniqueness for fields if being updated
+    await ensureUniqueCompanyFields(payload, companyId);
+
     const company = await Company.findByIdAndUpdate(
       companyId,
       { $set: { ...payload, updatedBy } },
-      { new: true }
+      { new: true, runValidators: true }
     );
     return company;
   }
@@ -267,8 +353,12 @@ class CompanyService {
   if (!company) throw new Error("Company not found");
   // Prefer plan snapshot supplied in payload; fallback to canonical plan doc.
   let planDoc = null;
-  if (planData && planData.planSnapshot) {
-    planDoc = planData.planSnapshot;
+  // Accept plan snapshot when frontend sends a full plan object (sometimes with an _id present),
+  // or when payload explicitly contains planSnapshot. Otherwise, fall back to canonical plan lookup.
+  if (planData && (planData.planSnapshot || planData.modulePermissions || planData.pricePaise || planData.name)) {
+    planDoc = planData.planSnapshot || planData;
+  } else if (company && company.planSnapshot && Object.keys(company.planSnapshot || {}).length) {
+    planDoc = company.planSnapshot;
   } else if (planData && planData._id) {
     planDoc = await planModel.findById(planData._id).lean();
   }
@@ -330,10 +420,50 @@ class CompanyService {
   try {
     const snapshotToStore = planDoc && typeof planDoc.toObject === 'function' ? planDoc.toObject() : planDoc;
     company.planSnapshot = snapshotToStore;
+    // Persist selectedAddons in a compact map by addon.value => qty
+    try {
+      const selected = {};
+      for (const a of addons) {
+        const addonDoc = await addonModel.findById(a.addonId).lean().catch(() => null);
+        if (addonDoc && addonDoc.value) {
+          selected[addonDoc.value] = Number(a.qty || 1);
+        }
+      }
+      company.selectedAddons = selected;
+    } catch (e) {
+      console.error('Failed to build selectedAddons map:', e);
+    }
+
+    // If payload provided a company code, persist it as well
+    if (payload && payload.code) company.code = payload.code;
+
     await company.save();
   } catch (err) {
     console.error('Failed to persist planSnapshot on company:', err);
   }
+
+  // // Recompute effectiveUserLimits from planDoc + requested addons (if any)
+  // try {
+  //   const effectiveLimits = { ...(planDoc.userPricing || {}) };
+  //   if (Array.isArray(addons) && addons.length > 0) {
+  //     const addonDocs = await addonModel.find({ _id: { $in: addons.map(a => a.addonId).filter(Boolean) } }).lean().catch(() => []);
+  //     const addonMap = {};
+  //     addonDocs.forEach(d => { if (d && d._id) addonMap[String(d._id)] = d; });
+  //     for (const a of addons) {
+  //       const doc = addonMap[String(a.addonId)];
+  //       const qty = Number(a.qty || 1);
+  //       if (!doc || !doc.provides) continue;
+  //       for (const k of Object.keys(doc.provides)) {
+  //         const addVal = Number(doc.provides[k] || 0) * qty;
+  //         effectiveLimits[k] = (Number(effectiveLimits[k] || 0) + addVal);
+  //       }
+  //     }
+  //   }
+  //   company.effectiveUserLimits = effectiveLimits;
+  //   await company.save();
+  // } catch (e) {
+  //   console.error('Failed to compute effectiveUserLimits for company on signup/update:', e);
+  // }
 
   const subtotalPaise = items.reduce((s, i) => s + i.lineSubtotalPaise, 0);
 
@@ -452,15 +582,7 @@ class CompanyService {
       walletId: walletDoc?._id || null,
       amountPaise: walletAppliedPaise
     },
-    payments: walletAppliedPaise
-      ? [{
-          method: "manual",
-          amountPaise: walletAppliedPaise,
-          status: "success",
-          paidAt: Date.now(),
-          referenceId: "WALLET"
-        }]
-      : [],
+    // payments are recorded in Payment collection; link via paymentIds after creation
     taxBreakdown: totalTaxPaiseForDisplay
       ? [{
           taxName: planDoc.taxName || plan.taxName || "GST",
@@ -516,6 +638,19 @@ class CompanyService {
       source: "WALLET",
       description: `Wallet payment for order ${order._id}`
     });
+    // Create Payment record for wallet debit and link to order
+    const walletPayment = await paymentModel.create({
+      order: order._id,
+      company: companyId,
+      amountPaise: walletAppliedPaise,
+      method: 'WALLET',
+      status: 'SUCCESS',
+      transactionId: 'WALLET',
+      createdBy: userId
+    });
+    order.paymentIds = order.paymentIds || [];
+    order.paymentIds.push(walletPayment._id);
+    await order.save();
   }
 
   return { company, order };
@@ -630,7 +765,7 @@ class CompanyService {
                   }
                 },
                 status: "$$order.status",
-                payments: "$$order.payments",
+                payments: [],
                 createdAt: "$$order.createdAt",
                 updatedAt: "$$order.updatedAt"
               }
@@ -771,15 +906,12 @@ class CompanyService {
         throw new Error("Order already paid and subscription activated");
       }
 
-      // 5. Idempotency check - prevent duplicate cash receipts
-      const alreadyRecorded = order.payments?.some(
-        (p) => p.method === "cash" && p.referenceId?.trim() === cashReceiptNo.trim()
-      );
-      if (alreadyRecorded) {
-        throw new Error("Cash receipt already recorded for this order");
+      // 5. Idempotency & global uniqueness check: ensure the cash receipt hasn't been used elsewhere
+      const existingPayment = await paymentModel.findOne({ company: companyId, transactionId: cashReceiptNo.trim() }).lean();
+      if (existingPayment) {
+        throw new Error("Cash receipt already recorded for this company/order");
       }
 
-      // 5b. Global uniqueness check: ensure the cash receipt hasn't been used elsewhere
       const existingTx = await transactionModel.findOne({ reference: cashReceiptNo.trim() });
       if (existingTx) {
         throw new Error("Cash receipt already used for another payment");
@@ -791,33 +923,36 @@ class CompanyService {
         throw new Error("No amount due for this order");
       }
 
-      // 7. 💰 Record payment directly in order
-      if (!order.payments) {
-        order.payments = [];
-      }
-
-      order.payments.push({
-        method: "cash",
+      // 7. Create a Payment document (payments are stored separately)
+      const paymentDoc = await paymentModel.create({
+        order: order._id,
+        company: companyId,
         amountPaise,
-        referenceId: cashReceiptNo.trim(),
-        status: "success",
-        paidAt: Date.now()
+        method: 'OFFLINE',
+        status: 'SUCCESS',
+        transactionId: cashReceiptNo.trim(),
+        approvedBy: createdBy,
+        createdBy,
       });
 
-      // 8. Update final amounts
+      // 8. Link payment to order (store paymentIds array)
+      order.paymentIds = order.paymentIds || [];
+      order.paymentIds.push(paymentDoc._id);
+
+      // 9. Update final amounts on order
       order.final.totalPaidPaise = (order.final?.totalPaidPaise || 0) + amountPaise;
       order.final.amountDuePaise = Math.max(
         0,
         (order.totals?.totalPayablePaise || 0) - order.final.totalPaidPaise
       );
 
-      // 9. Update order status
+      // 10. Update order status
       order.status = order.final.amountDuePaise === 0 ? "paid" : "partially_paid";
 
-      // 10. Save order
+      // 11. Save order
       await order.save();
 
-      // 11. Create transaction record
+      // 12. Create transaction record
       await transactionModel.create({
         companyId,
         type: "CASH_PAYMENT",
@@ -830,7 +965,7 @@ class CompanyService {
         createdBy,
       });
 
-      // 12. Activate subscription if fully paid
+      // 13. Activate subscription if fully paid
       let subscription = null;
       if (order.status === "paid") {
         subscription = await activateSubscriptionIfEligible(order);
@@ -853,7 +988,7 @@ class CompanyService {
   }
 
   // ========================= UPGRADE SUBSCRIPTION =========================
-  static async upgradeSubscription({ subscriptionId, newPlanId, couponCode, useWallet, createdBy }) {
+  static async upgradeSubscription({ subscriptionId, newPlanId, couponCode, useWallet, addons = [], createdBy }) {
     try {
       const now = Date.now();
 
@@ -863,11 +998,11 @@ class CompanyService {
       if (subscription.status !== "ACTIVE") throw new Error("Only ACTIVE subscriptions can be upgraded");
 
       // Validate plans
-      const oldPlan = await planModel.findById(subscription.planId);
+      const oldPlan = subscription.planSnapshot && Object.keys(subscription.planSnapshot || {}).length ? subscription.planSnapshot : (await loadCompanyPlanSnapshot(subscription.companyId)) || await planModel.findById(subscription.planId);
       const newPlan = await planModel.findById(newPlanId);
 
       if (!newPlan) throw new Error("New plan not found");
-      if (newPlan.pricePaise <= oldPlan.pricePaise) {
+      if ((newPlan.pricePaise || 0) <= (oldPlan.pricePaise || 0)) {
         throw new Error("Upgrade must be to a higher-priced plan");
       }
 
@@ -878,9 +1013,30 @@ class CompanyService {
       const currentUsage = company.usage || {};
       const planLimits = newPlan.userPricing || {};
       const addonLimits = {};
-
+      // include existing subscription addons
       for (const addon of subscription.addonSnapshot || []) {
         addonLimits[addon.value] = (addonLimits[addon.value] || 0) + addon.qty;
+      }
+      // include incoming addons (from upgrade payload) so their provides/counts are considered
+      if (Array.isArray(addons) && addons.length > 0) {
+        // load addon docs to map value -> provides
+        const addonDocs = await addonModel.find({ _id: { $in: addons.map(a => a.addonId).filter(Boolean) } }).lean();
+        const addonDocMap = {};
+        addonDocs.forEach(d => { if (d && d.value) addonDocMap[String(d._id)] = d; });
+        for (const a of addons) {
+          const doc = addonDocMap[String(a.addonId)];
+          const qty = Number(a.qty || 1);
+          if (!doc) continue;
+          // if addon provides userLimits keys, add qty to corresponding value key counts
+          if (doc.provides && typeof doc.provides === 'object') {
+            for (const k of Object.keys(doc.provides)) {
+              const addVal = Number(doc.provides[k] || 0) * qty;
+              addonLimits[k] = (addonLimits[k] || 0) + addVal;
+            }
+          }
+          // also keep a simple count per addon.value for reference
+          addonLimits[doc.value] = (addonLimits[doc.value] || 0) + qty;
+        }
       }
 
       for (const key of Object.keys(currentUsage)) {
@@ -903,35 +1059,23 @@ class CompanyService {
       const remainingValue = Math.round((paidAmount / totalDays) * remainingDays);
       const subtotal = newPlan.pricePaise;
 
-      // Handle coupon.
+      // Handle coupon using CouponService.validateAndApply which validates and
+      // returns discountPaise + finalAmountPaise. We record discount in order.discounts.
       let discounts = [];
+      let totalDiscount = 0;
       if (couponCode) {
-        const coupon = await couponModel.findOne({ code: couponCode, isActive: true });
-
-        if (coupon &&
-          (!coupon.validFrom || now >= coupon.validFrom) &&
-          (!coupon.validTo || now <= coupon.validTo) &&
-          (!coupon.minSpendPaise || subtotal >= coupon.minSpendPaise)
-        ) {
-          let applied = coupon.discountType === CouponType.PERCENT
-            ? Math.floor((subtotal * coupon.discountValue) / 100)
-            : Number(coupon.discountValue || 0);
-
-          if (coupon.maxDiscountPaise) applied = Math.min(applied, coupon.maxDiscountPaise);
-
-          discounts.push({
-            couponId: coupon._id,
-            couponCode: coupon.code,
-            discountType: coupon.discountType,
-            discountValue: coupon.discountValue,
-            discountAppliedPaise: applied,
-          });
+        try {
+          const applied = await CouponService.validateAndApply(couponCode, newPlan.code, subtotal);
+          const c = applied.coupon;
+          discounts.push({ couponId: c._id, couponCode: c.code, discountType: c.discountType, discountValue: c.discountValue, discountAppliedPaise: applied.discountPaise });
+          totalDiscount = applied.discountPaise || 0;
+        } catch (e) {
+          throw new Error(`Coupon invalid: ${e.message}`);
         }
       }
 
-      const totalDiscount = discounts.reduce((s, d) => s + d.discountAppliedPaise, 0);
-
       // Tax calculation respecting taxIncluded on new plan
+      const taxPercent = 18;
       let taxableAmount = 0;
       let taxFromIncluded = 0;
       // If plan taxIncluded, a portion of subtotal is tax
@@ -958,7 +1102,7 @@ class CompanyService {
 
       const amountDue = Math.max(0, totalPayable - walletApplied);
 
-      // Create order
+      // Create order items (include requested addons if any)
       const items = [{
         type: "plan",
         itemId: newPlan._id,
@@ -968,6 +1112,29 @@ class CompanyService {
         lineSubtotalPaise: newPlan.pricePaise,
         taxConfig: { hasTax: newPlan.hasTax }
       }];
+
+      if (Array.isArray(addons) && addons.length > 0) {
+        const addonDocs = await addonModel.find({ _id: { $in: addons.map(a => a.addonId).filter(Boolean) } }).lean();
+        const addonMap = {};
+        addonDocs.forEach(a => { addonMap[String(a._id)] = a; });
+        for (const a of addons) {
+          const doc = addonMap[String(a.addonId)];
+          if (!doc) continue;
+          const qty = Math.max(1, Number(a.qty || 1));
+          items.push({
+            type: "addon",
+            itemId: doc._id,
+            name: doc.name,
+            value: doc.value,
+            qty,
+            priceAtPurchasePaise: doc.pricePaise,
+            lineSubtotalPaise: doc.pricePaise * qty,
+            taxConfig: { hasTax: !!doc.hasTax, taxIncluded: !!doc.taxIncluded },
+            provides: doc.provides || null,
+            addonType: doc.type || 'limit'
+          });
+        }
+      }
 
       const orderStatus = amountDue === 0 ? "paid" : walletApplied > 0 ? "partially_paid" : "pending";
 
@@ -981,15 +1148,7 @@ class CompanyService {
           walletId: wallet?._id || null,
           amountPaise: walletApplied,
         },
-        payments: walletApplied
-          ? [{
-            method: "manual",
-            amountPaise: walletApplied,
-            paidAt: now,
-            status: "success",
-            referenceId: "WALLET",
-          }]
-          : [],
+        // payments will be recorded in Payment collection and linked after creation
         taxBreakdown: totalTax
           ? [{
             taxName: newPlan.taxName || "GST",
@@ -1017,11 +1176,82 @@ class CompanyService {
         createdBy,
       });
 
-      // Activate subscription if fully paid
-      let newSubscription = null;
-      if (order.status === "paid") {
-        newSubscription = await activateSubscriptionIfEligible(order);
-      }
+        // Activate subscription / apply addons if order is paid or partially_paid
+        let newSubscription = null;
+        if (order.status === "paid" || order.status === "partially_paid") {
+          // increment coupon usage for applied coupon (best-effort)
+          if (couponCode) {
+            try { await CouponService.incrementUsage(couponCode); } catch (e) { /* ignore */ }
+          }
+          // Activate or update subscription
+          newSubscription = await activateSubscriptionIfEligible(order);
+
+          // Apply addon items to subscription/company similar to purchaseAddons
+          try {
+            // find active subscription (may be newSubscription or existing)
+            const activeSub = newSubscription || await subscriptionModel.findOne({ companyId: company._id, status: 'ACTIVE' });
+            const addonItems = (items || []).filter(it => it.type === 'addon');
+            if (activeSub && addonItems.length) {
+              const existing = activeSub.addonSnapshot || [];
+              const existingMap = {};
+              existing.forEach(a => { if (a && a.value) existingMap[a.value] = a; });
+              for (const it of addonItems) {
+                const doc = await addonModel.findById(it.itemId).lean();
+                if (!doc) continue;
+                const val = doc.value;
+                if (existingMap[val]) {
+                  existingMap[val].qty = (existingMap[val].qty || 0) + (it.qty || 1);
+                } else {
+                  const now = Date.now();
+                  const durationDays = doc.durationDays || null;
+                  const endAt = durationDays ? now + (durationDays * DAY_MS) : null;
+                  existingMap[val] = {
+                    addonId: it.itemId,
+                    name: it.name,
+                    value: val,
+                    qty: it.qty || 1,
+                    pricePaise: it.priceAtPurchasePaise,
+                    hasTax: it.taxConfig?.hasTax || (doc && doc.hasTax) || false,
+                    taxIncluded: it.taxConfig?.taxIncluded || (doc && doc.taxIncluded) || false,
+                    provides: doc?.provides || null,
+                    type: doc?.type || 'limit',
+                    durationDays: durationDays,
+                    startAt: now,
+                    endAt: endAt,
+                  };
+                }
+              }
+              const merged = Object.values(existingMap);
+              activeSub.addonSnapshot = merged;
+              activeSub.addonPricePaise = merged.reduce((s,a) => s + (a.pricePaise || 0) * (a.qty || 1), 0);
+              await activeSub.save();
+
+              // update company.selectedAddons map
+              const companyMap = company.selectedAddons || {};
+              merged.forEach(a => { if (a && a.value) companyMap[a.value] = (companyMap[a.value] || 0) + (a.qty || 0); });
+              company.selectedAddons = companyMap;
+              // Recompute effectiveUserLimits from plan + subscription.addonSnapshot
+              try {
+                const planPricing = activeSub.planSnapshot && activeSub.planSnapshot.userPricing ? activeSub.planSnapshot.userPricing : {};
+                const effectiveLimits = { ...(planPricing || {}) };
+                (activeSub.addonSnapshot || []).forEach((a) => {
+                  if (a && a.provides && typeof a.provides === 'object') {
+                    for (const k of Object.keys(a.provides)) {
+                      const addVal = Number(a.provides[k] || 0) * Number(a.qty || 1);
+                      effectiveLimits[k] = (Number(effectiveLimits[k] || 0) + addVal);
+                    }
+                  }
+                });
+                company.effectiveUserLimits = effectiveLimits;
+              } catch (e) {
+                // ignore errors here
+              }
+              await company.save();
+            }
+          } catch (e) {
+            console.error('Failed to apply addons during upgrade:', e);
+          }
+        }
 
       // Deduct wallet
       if (walletApplied > 0 && wallet) {
@@ -1036,7 +1266,37 @@ class CompanyService {
           description: `Wallet debit for upgrade order ${order._id}`,
           createdBy,
         });
+        // record payment document and link to order
+        const wp = await paymentModel.create({ order: order._id, company: company._id, amountPaise: walletApplied, method: 'WALLET', status: 'SUCCESS', transactionId: 'WALLET', createdBy });
+        order.paymentIds = order.paymentIds || [];
+        order.paymentIds.push(wp._id);
+        await order.save();
       }
+
+      // // If order was NOT paid (no new active subscription), ensure company reflects
+      // // selected addons and effective limits derived from plan snapshot + carried addons
+      // if (!newSubscription) {
+      //   try {
+      //     // Build selectedAddons map from carriedAddons
+      //     const selectedAddonsMap = {};
+      //     (carriedAddons || []).forEach(a => { if (a && a.value) selectedAddonsMap[a.value] = (selectedAddonsMap[a.value] || 0) + (a.qty || 1); });
+
+      //     // Compute effective limits from plan snapshot + carriedAddons.provides
+      //     const planSnapshot = plan && plan.userPricing ? plan : (company.planSnapshot || {});
+      //     const effectiveLimits = { ...((planSnapshot && planSnapshot.userPricing) ? planSnapshot.userPricing : {}) };
+      //     for (const a of (carriedAddons || [])) {
+      //       if (!a || !a.provides) continue;
+      //       for (const k of Object.keys(a.provides)) {
+      //         const addVal = Number(a.provides[k] || 0) * Number(a.qty || 1);
+      //         effectiveLimits[k] = (Number(effectiveLimits[k] || 0) + addVal);
+      //       }
+      //     }
+
+      //     await Company.updateOne({ _id: company._id }, { $set: { selectedAddons: selectedAddonsMap, effectiveUserLimits: effectiveLimits } }).catch(() => {});
+      //   } catch (e) {
+      //     console.error('Failed to update company selectedAddons/effectiveUserLimits after reactivation order:', e);
+      //   }
+      // }
 
       return {
         success: true,
@@ -1053,6 +1313,341 @@ class CompanyService {
     }
   }
 
+  /**
+   * Schedule a plan change (downgrade or any change) to be applied at the next billing cycle.
+   * Stores a planSnapshot on the subscription.scheduledChange with effectiveAt = current endAt + 1
+   */
+  static async schedulePlanChange({ subscriptionId, newPlanId, requestedBy }) {
+    const subscription = await subscriptionModel.findById(subscriptionId);
+    if (!subscription) throw new Error('Subscription not found');
+
+    const plan = await planModel.findById(newPlanId).lean();
+    if (!plan) throw new Error('Target plan not found');
+
+    const planSnapshot = {
+      planId: plan._id,
+      code: plan.code,
+      name: plan.name,
+      billingCycle: plan.billingCycle,
+      durationDays: plan.durationDays,
+      pricePaise: plan.pricePaise,
+      userPricing: plan.userPricing,
+      modulePermissions: plan.modulePermissions
+    };
+
+    // Effective at next billing start
+    const effectiveAt = (subscription.endAt || Date.now()) + 1;
+
+    // only store scheduling metadata here; plan snapshot is available via subscription.planSnapshot when applied
+    subscription.scheduledChange = {
+      effectiveAt,
+      requestedBy,
+      createdAt: Date.now()
+    };
+
+    await subscription.save();
+
+    // Also persist intention on company for quick access
+    await Company.updateOne({ _id: subscription.companyId }, { $set: { 'settings.scheduledPlanChange': { planCode: plan.code, effectiveAt } } });
+
+    return { subscriptionId, scheduledChange: subscription.scheduledChange };
+  }
+
+  /**
+   * Purchase addons for a company. Creates an order of type ADDON_PURCHASE.
+   * If paid immediately (wallet covers) the addon quantities are applied to
+   * the active subscription and company.selectedAddons is updated.
+   * addons: [{ addonId, qty }]
+   */
+  static async purchaseAddons({ companyId, addons = [], useWallet = false, createdBy }) {
+    const couponCode = arguments[0].couponCode || null;
+    const company = await Company.findById(companyId);
+    if (!company) throw new Error('Company not found');
+
+    // Load addons
+    const addonDocs = await addonModel.find({ _id: { $in: addons.map(a => a.addonId) } }).lean();
+    const addonMap = {};
+    addonDocs.forEach(a => { addonMap[String(a._id)] = a; });
+
+    const items = [];
+    for (const a of addons) {
+      const doc = addonMap[String(a.addonId)];
+      if (!doc) throw new Error(`Addon not found: ${a.addonId}`);
+      const qty = Math.max(1, Number(a.qty || 1));
+      items.push({
+        type: 'addon',
+        itemId: doc._id,
+        name: doc.name,
+        value: doc.value,
+        qty,
+        priceAtPurchasePaise: doc.pricePaise,
+        lineSubtotalPaise: doc.pricePaise * qty,
+        taxConfig: { hasTax: !!doc.hasTax, taxIncluded: !!doc.taxIncluded },
+        provides: doc.provides || null,
+        addonType: doc.type || 'limit'
+      });
+    }
+
+    const subtotalPaise = items.reduce((s,i) => s + (i.lineSubtotalPaise || 0), 0);
+
+    // Apply coupon (if any) on subtotal first, using CouponService helper
+    let coupon = null;
+    let discountPaise = 0;
+    let discountedSubtotal = subtotalPaise;
+    if (couponCode) {
+      const cs = require('./coupon.service');
+      try {
+        const applied = await cs.validateAndApply(couponCode, null, subtotalPaise);
+        coupon = applied.coupon;
+        discountPaise = applied.discountPaise || 0;
+        discountedSubtotal = applied.finalAmountPaise;
+      } catch (e) {
+        throw new Error(`Coupon invalid: ${e.message}`);
+      }
+    }
+
+
+    // Tax handling: respect addon-level taxIncluded flag. We'll compute included tax (for display)
+    // and tax to add (exclusive) separately. Only exclusive tax is added to payable amount.
+    const taxPercent = 18;
+    let includedTaxPaise = 0;
+    let exclusiveTaxBase = 0;
+    const taxableTotal = items.filter(it => it.taxConfig?.hasTax).reduce((s,it)=>s+it.lineSubtotalPaise,0);
+    const taxableIncludedTotal = items.filter(it => it.taxConfig?.hasTax && it.taxConfig?.taxIncluded).reduce((s,it)=>s+it.lineSubtotalPaise,0);
+    const taxableExclusiveTotal = items.filter(it => it.taxConfig?.hasTax && !it.taxConfig?.taxIncluded).reduce((s,it)=>s+it.lineSubtotalPaise,0);
+
+    // Allocate discount proportionally across subtotal then split across included/exclusive taxable buckets
+    const discountOnTaxable = taxableTotal > 0 ? Math.round((taxableTotal / subtotalPaise) * discountPaise) : 0;
+    const discountOnIncluded = taxableTotal > 0 ? Math.round((taxableIncludedTotal / taxableTotal) * discountOnTaxable) : 0;
+    const discountOnExclusive = discountOnTaxable - discountOnIncluded;
+
+    const taxableIncludedAfterDiscount = Math.max(0, taxableIncludedTotal - discountOnIncluded);
+    const taxableExclusiveAfterDiscount = Math.max(0, taxableExclusiveTotal - discountOnExclusive);
+
+    // included tax portion (for display only)
+    if (taxableIncludedAfterDiscount > 0) {
+      includedTaxPaise = Math.round(taxableIncludedAfterDiscount * (taxPercent / (100 + taxPercent)));
+    }
+
+    // tax to add on exclusive-tax items
+    let exclusiveTaxPaise = 0;
+    if (taxableExclusiveAfterDiscount > 0) {
+      exclusiveTaxPaise = Math.round(taxableExclusiveAfterDiscount * (taxPercent / 100));
+    }
+
+    const totalTaxPaise = includedTaxPaise + exclusiveTaxPaise;
+
+    const totalPayablePaise = Math.max(0, discountedSubtotal + exclusiveTaxPaise);
+
+    // Wallet handling
+    let walletApplied = 0;
+    let walletDoc = null;
+    if (useWallet && totalPayablePaise > 0) {
+      walletDoc = await walletModel.findOne({ companyId });
+      if (!walletDoc) walletDoc = await walletModel.create({ companyId, balancePaise: 0 });
+      walletApplied = Math.min(walletDoc.balancePaise, totalPayablePaise);
+    }
+
+    const amountDuePaise = Math.max(0, totalPayablePaise - walletApplied);
+
+    // Prepare discounts array
+    const discounts = [];
+    if (coupon && coupon.code) {
+      discounts.push({ couponId: coupon._id, couponCode: coupon.code, discountType: coupon.discountType || 'fixed', discountAppliedPaise: discountPaise });
+    }
+
+    const totalsObj = {
+      subtotalPaise,
+      totalDiscountPaise: discountPaise,
+      taxableAmountPaise: Math.max(0, taxableTotal - discountOnTaxable),
+      totalTaxPaise: totalTaxPaise,
+      totalPayablePaise
+    };
+
+    const order = await orderModel.create({
+      companyId,
+      orderType: 'ADDON_PURCHASE',
+      items,
+      totals: totalsObj,
+      discounts,
+      walletUsed: walletApplied > 0 ? { walletId: walletDoc?._id || null, amountPaise: walletApplied } : undefined,
+      taxBreakdown: [],
+      final: { totalPaidPaise: walletApplied, amountDuePaise },
+      status: amountDuePaise === 0 ? 'paid' : (walletApplied > 0 ? 'partially_paid' : 'pending'),
+      // payments are stored in Payment collection; link via paymentIds when applicable
+    });
+
+    // Deduct wallet if used
+    if (walletApplied > 0) {
+      const upd = await walletModel.updateOne({ _id: walletDoc._id, balancePaise: { $gte: walletApplied } }, { $inc: { balancePaise: -walletApplied } });
+      if (upd.modifiedCount !== 1) throw new Error('Wallet balance changed. Retry');
+      await transactionModel.create({ companyId, orderId: order._id, type: 'WALLET_DEBIT', amountPaise: walletApplied, source: 'WALLET', description: `Wallet payment for addons order ${order._id}`, createdBy });
+      const walletPayment = await paymentModel.create({ order: order._id, company: companyId, amountPaise: walletApplied, method: 'WALLET', status: 'SUCCESS', transactionId: 'WALLET', createdBy });
+      order.paymentIds = order.paymentIds || [];
+      order.paymentIds.push(walletPayment._id);
+      await order.save();
+    }
+
+    // Build taxBreakdown for the order (include both included and to-add taxes)
+    const taxBreakdown = [];
+    if (includedTaxPaise > 0) {
+      taxBreakdown.push({ taxName: 'GST', percentage: taxPercent, taxAmountPaise: includedTaxPaise, included: true });
+    }
+    if (exclusiveTaxPaise > 0) {
+      taxBreakdown.push({ taxName: 'GST', percentage: taxPercent, taxAmountPaise: exclusiveTaxPaise, included: false });
+    }
+    if (taxBreakdown.length) {
+      order.taxBreakdown = taxBreakdown;
+      await order.save();
+    }
+
+    // If there is an unpaid remainder assume an offline/direct payment and mark order paid
+    if (amountDuePaise > 0) {
+      // create transaction record (use allowed enums: CASH_PAYMENT / CASH)
+      await transactionModel.create({ companyId, orderId: order._id, type: 'CASH_PAYMENT', amountPaise: amountDuePaise, source: 'CASH', description: `Offline payment for addons order ${order._id}`, createdBy });
+      // create a Payment document marked SUCCESS
+      const offlinePayment = await paymentModel.create({ order: order._id, company: companyId, amountPaise: amountDuePaise, method: 'OFFLINE', status: 'SUCCESS', transactionId: 'OFFLINE', createdBy });
+      order.paymentIds = order.paymentIds || [];
+      order.paymentIds.push(offlinePayment._id);
+      order.final = order.final || { totalPaidPaise: 0, amountDuePaise };
+      order.final.totalPaidPaise = (order.final.totalPaidPaise || 0) + amountDuePaise;
+      order.final.amountDuePaise = 0;
+      order.status = 'paid';
+      await order.save();
+    }
+
+    // If paid, apply addons to active subscription
+    if (order.status === 'paid' || order.status === 'partially_paid') {
+      // Increment coupon usage if applied
+      if (coupon && coupon.code) {
+        try { await require('./coupon.service').incrementUsage(coupon.code); } catch (e) { /* ignore */ }
+      }
+      const subscription = await subscriptionModel.findOne({ companyId, status: 'ACTIVE' });
+      if (subscription) {
+        // merge addonSnapshot
+        const existing = subscription.addonSnapshot || [];
+        const existingMap = {};
+        existing.forEach(a => { if (a && a.value) existingMap[a.value] = a; });
+        for (const it of items) {
+          const addonDoc = addonDocs.find(ad => String(ad._id) === String(it.itemId));
+          if (!addonDoc) continue;
+          const val = addonDoc.value;
+          if (existingMap[val]) {
+            existingMap[val].qty = (existingMap[val].qty || 0) + (it.qty || 1);
+          } else {
+            const now = Date.now();
+            const durationDays = addonDoc.durationDays || null;
+            const endAt = durationDays ? now + (durationDays * DAY_MS) : null;
+            existingMap[val] = {
+              addonId: it.itemId,
+              name: it.name,
+              value: val,
+              qty: it.qty || 1,
+              pricePaise: it.priceAtPurchasePaise,
+              hasTax: it.taxConfig?.hasTax || (addonDoc && addonDoc.hasTax) || false,
+              taxIncluded: it.taxConfig?.taxIncluded || (addonDoc && addonDoc.taxIncluded) || false,
+              provides: addonDoc?.provides || null,
+              type: addonDoc?.type || 'limit',
+              durationDays: durationDays,
+              startAt: now,
+              endAt: endAt,
+            };
+          }
+        }
+        const merged = Object.values(existingMap);
+        subscription.addonSnapshot = merged;
+        subscription.addonPricePaise = merged.reduce((s,a) => s + (a.pricePaise || 0) * (a.qty || 1), 0);
+        await subscription.save();
+
+        // update company.selectedAddons map
+        const companyMap = company.selectedAddons || {};
+        merged.forEach(a => { if (a && a.value) companyMap[a.value] = (companyMap[a.value] || 0) + (a.qty || 0); });
+        company.selectedAddons = companyMap;
+        // Recompute effectiveUserLimits from plan + subscription.addonSnapshot
+        try {
+          const planPricing = subscription.planSnapshot && subscription.planSnapshot.userPricing ? subscription.planSnapshot.userPricing : {};
+          const effectiveLimits = { ...(planPricing || {}) };
+          (subscription.addonSnapshot || []).forEach((a) => {
+            if (a && a.provides && typeof a.provides === 'object') {
+              for (const k of Object.keys(a.provides)) {
+                const addVal = Number(a.provides[k] || 0) * Number(a.qty || 1);
+                effectiveLimits[k] = (Number(effectiveLimits[k] || 0) + addVal);
+              }
+            }
+          });
+          company.effectiveUserLimits = effectiveLimits;
+        } catch (e) {
+          // ignore errors here - keep existing limits
+        }
+        await company.save();
+      } else {
+        // No active subscription: still update company selectedAddons and effective limits
+        const companyMap = company.selectedAddons || {};
+        items.forEach((it) => {
+          if (!it || !it.value) return;
+          companyMap[it.value] = (companyMap[it.value] || 0) + (it.qty || 0);
+        });
+        company.selectedAddons = companyMap;
+
+        // Recompute effectiveUserLimits using company.planSnapshot (fallback) + addon provides
+        try {
+          const planPricing = (company.planSnapshot && company.planSnapshot.userPricing) ? company.planSnapshot.userPricing : {};
+          const effectiveLimits = { ...(planPricing || {}) };
+          // Use addonDocs to lookup provides
+          items.forEach((it) => {
+            const addonDoc = addonDocs.find(ad => String(ad._id) === String(it.addonId || it.itemId));
+            if (!addonDoc) return;
+            const provides = addonDoc.provides || null;
+            if (provides && typeof provides === 'object') {
+              for (const k of Object.keys(provides)) {
+                const addVal = Number(provides[k] || 0) * Number(it.qty || 0);
+                effectiveLimits[k] = (Number(effectiveLimits[k] || 0) + addVal);
+              }
+            }
+          });
+          company.effectiveUserLimits = effectiveLimits;
+        } catch (e) {
+          // ignore
+        }
+        await company.save();
+      }
+    }
+
+    return { orderId: order._id, status: order.status };
+  }
+
+  // Update company usage counts atomically. adjustments: [{ key, delta }] where delta can be positive or negative
+  static async updateUsage(companyId, adjustments = []) {
+    if (!companyId) throw new Error('companyId required');
+    if (!Array.isArray(adjustments) || adjustments.length === 0) throw new Error('adjustments required');
+
+    // Build $inc object
+    const inc = {};
+    for (const adj of adjustments) {
+      const key = adj.key;
+      const delta = Number(adj.delta || 0);
+      if (!key || delta === 0) continue;
+      inc[`usage.${key}`] = (inc[`usage.${key}`] || 0) + delta;
+    }
+
+    if (Object.keys(inc).length === 0) throw new Error('no valid adjustments');
+
+    // Apply atomic update
+    const updated = await Company.findOneAndUpdate({ _id: companyId }, { $inc: inc }, { new: true }).lean();
+
+    // Optional: ensure no negative usage values (repair by setting to zero)
+    const usage = updated.usage || {};
+    const fixes = {};
+    for (const k of Object.keys(usage)) {
+      if (usage[k] < 0) fixes[`usage.${k}`] = 0 - usage[k];
+    }
+    if (Object.keys(fixes).length) {
+      await Company.updateOne({ _id: companyId }, { $inc: fixes });
+    }
+
+    return { success: true, usage: (await Company.findById(companyId).lean()).usage };
+  }
+
   // ========================= REACTIVATE SUBSCRIPTION =========================
   static async reactivateSubscription({ subscriptionId, couponCode, useWallet, createdBy }) {
     try {
@@ -1061,7 +1656,10 @@ class CompanyService {
       const subscription = await subscriptionModel.findById(subscriptionId);
       if (!subscription) throw new Error("Subscription not found");
 
-      const plan = await planModel.findById(subscription.planId);
+      // Prefer the subscription's stored snapshot for plan details; fallback to canonical plan doc
+      const plan = subscription.planSnapshot && Object.keys(subscription.planSnapshot || {}).length
+        ? subscription.planSnapshot
+        : (await loadCompanyPlanSnapshot(subscription.companyId)) || await planModel.findById(subscription.planId);
       const company = await Company.findById(subscription.companyId);
 
       if (!plan || !company) throw new Error("Plan or company not found");
@@ -1185,15 +1783,7 @@ class CompanyService {
           walletId: wallet?._id || null,
           amountPaise: walletApplied
         },
-        payments: walletApplied
-          ? [{
-            method: "manual",
-            amountPaise: walletApplied,
-            status: "success",
-            paidAt: now,
-            referenceId: "WALLET"
-          }]
-          : [],
+        // payments are stored separately in Payment collection and linked via paymentIds
         taxBreakdown: plan.hasTax
           ? [{
             taxName: plan.taxName || "GST",
@@ -1241,6 +1831,11 @@ class CompanyService {
           description: `Wallet debit for ${orderType} order ${order._id}`,
           createdBy,
         });
+        // create payment record for wallet usage and link to order
+        const wp = await paymentModel.create({ order: order._id, company: company._id, amountPaise: walletApplied, method: 'WALLET', status: 'SUCCESS', transactionId: 'WALLET', createdBy });
+        order.paymentIds = order.paymentIds || [];
+        order.paymentIds.push(wp._id);
+        await order.save();
       }
 
       return {
@@ -1387,22 +1982,41 @@ class CompanyService {
           const planItem = (latestOrder.items || []).find(it => it.type === 'plan');
           if (planItem && planItem.itemId) {
             try {
-              const planDoc = await planModel.findById(planItem.itemId).lean();
-              if (planDoc) {
+              // Prefer company.planSnapshot if present
+              if (company.planSnapshot && Object.keys(company.planSnapshot || {}).length) {
+                const p = company.planSnapshot;
                 planData = {
                   subscriptionId: null,
                   planSnapshot: {
-                    _id: planDoc._id,
-                    code: planDoc.code,
-                    name: planDoc.name,
-                    pricePaise: planDoc.pricePaise,
-                    billingCycle: planDoc.billingCycle,
+                    _id: p._id || null,
+                    code: p.code,
+                    name: p.name,
+                    pricePaise: p.pricePaise,
+                    billingCycle: p.billingCycle,
                   },
-                  planPricePaise: planItem.priceAtPurchasePaise || planDoc.pricePaise,
+                  planPricePaise: planItem.priceAtPurchasePaise || p.pricePaise,
                   status: latestOrder.status || null,
                   endAt: null,
                   addonSnapshot: (latestOrder.items || []).filter(i => i.type === 'addon').map(a => ({ addonId: a.itemId, name: a.name, qty: a.qty, pricePaise: a.priceAtPurchasePaise }))
                 };
+              } else {
+                const planDoc = await planModel.findById(planItem.itemId).lean();
+                if (planDoc) {
+                  planData = {
+                    subscriptionId: null,
+                    planSnapshot: {
+                      _id: planDoc._id,
+                      code: planDoc.code,
+                      name: planDoc.name,
+                      pricePaise: planDoc.pricePaise,
+                      billingCycle: planDoc.billingCycle,
+                    },
+                    planPricePaise: planItem.priceAtPurchasePaise || planDoc.pricePaise,
+                    status: latestOrder.status || null,
+                    endAt: null,
+                    addonSnapshot: (latestOrder.items || []).filter(i => i.type === 'addon').map(a => ({ addonId: a.itemId, name: a.name, qty: a.qty, pricePaise: a.priceAtPurchasePaise }))
+                  };
+                }
               }
             } catch (err) {
               console.error('Error fetching plan for latest order:', err);
@@ -1414,6 +2028,16 @@ class CompanyService {
      
       // all orders for payment summary
       const allOrders = await orderModel.find({ companyId }).sort({ createdAt: -1 }).lean();
+
+      // fetch payments for these orders from payments collection
+      const orderIds = (allOrders || []).map(o => o._id).filter(Boolean);
+      const payments = orderIds.length ? await paymentModel.find({ order: { $in: orderIds } }).lean() : [];
+      const paymentsByOrder = {};
+      for (const p of payments) {
+        const k = String(p.order);
+        paymentsByOrder[k] = paymentsByOrder[k] || [];
+        paymentsByOrder[k].push(p);
+      }
 
       const orderSummary = {
         totalOrders: await orderModel.countDocuments({ companyId }),
@@ -1440,13 +2064,14 @@ class CompanyService {
           discounts: o.discounts || [],
           walletUsed: o.walletUsed || null,
           taxBreakdown: o.taxBreakdown || [],
-          payments: (o.payments || []).map(p => ({
+          payments: (paymentsByOrder[String(o._id)] || []).map(p => ({
+            _id: p._id,
             method: p.method,
-            referenceId: p.referenceId || null,
+            referenceId: p.transactionId || null,
             amountPaise: p.amountPaise || 0,
             amount: (p.amountPaise || 0) / 100,
             status: p.status,
-            paidAt: p.paidAt || null,
+            paidAt: p.createdAt || null,
           })),
           final: {
             totalPaidPaise: o.final?.totalPaidPaise || 0,
@@ -1461,10 +2086,10 @@ class CompanyService {
       let totalPaymentsMade = 0;
       let totalPendingAcrossOrders = 0;
 
+      for (const p of payments) {
+        if (String(p.company) === String(companyId) && p.status === 'SUCCESS') totalPaymentsMade += p.amountPaise || 0;
+      }
       for (const order of allOrders) {
-        for (const p of order.payments || []) {
-          if (p.status === 'success') totalPaymentsMade += p.amountPaise || 0;
-        }
         totalPendingAcrossOrders += order.final?.amountDuePaise || 0;
       }
 
@@ -1513,7 +2138,7 @@ class CompanyService {
       throw err;
     }
   }
-
+  
     // Minimal projection for sync step 1: company, branches, client users
     static async getCompanySyncStep1Data(companyId) {
       try {
@@ -1525,7 +2150,7 @@ class CompanyService {
 
         return {
           company: {
-            _id: company._id,
+            _id: company._id.toString(),
             name: company.name,
             code: company.code || null,
             contact: company.contact || {},
@@ -1533,6 +2158,8 @@ class CompanyService {
             status: company.status,
             createdAt: company.createdAt,
             updatedAt: company.updatedAt,
+            pan: company.panNo || null,
+            gstn: company.gstNumber || null,
           },
           branches: branches || [],
           clientUsers: clientUsers || [],
@@ -1562,7 +2189,8 @@ class CompanyService {
               planSnapshot: subscription.planSnapshot || {},
               planPricePaise: subscription.planPricePaise,
               status: subscription.status,
-              endAt: subscription.endAt,
+              validity_start : formatDate(subscription.startAt),
+              endAt: formatDate(subscription.endAt),
               addonSnapshot: subscription.addonSnapshot || [],
             };
           }
@@ -1577,22 +2205,29 @@ class CompanyService {
           const planItem = (latestOrder.items || []).find(it => it.type === 'plan');
           if (planItem && planItem.itemId) {
             try {
-              const planDoc = await planModel.findById(planItem.itemId).lean();
-              if (planDoc) {
+              // Prefer company plan snapshot if available
+              if (company.planSnapshot && Object.keys(company.planSnapshot || {}).length) {
+                const p = company.planSnapshot;
                 planData = {
                   subscriptionId: null,
-                  planSnapshot: {
-                    _id: planDoc._id,
-                    code: planDoc.code,
-                    name: planDoc.name,
-                    pricePaise: planDoc.pricePaise,
-                    billingCycle: planDoc.billingCycle,
-                  },
-                  planPricePaise: planItem.priceAtPurchasePaise || planDoc.pricePaise,
+                  planSnapshot: { _id: p._id || null, code: p.code, name: p.name, pricePaise: p.pricePaise, billingCycle: p.billingCycle },
+                  planPricePaise: planItem.priceAtPurchasePaise || p.pricePaise,
                   status: latestOrder.status || null,
                   endAt: null,
                   addonSnapshot: (latestOrder.items || []).filter(i => i.type === 'addon').map(a => ({ addonId: a.itemId, name: a.name, qty: a.qty, pricePaise: a.priceAtPurchasePaise }))
                 };
+              } else {
+                const planDoc = await planModel.findById(planItem.itemId).lean();
+                if (planDoc) {
+                  planData = {
+                    subscriptionId: null,
+                    planSnapshot: { _id: planDoc._id, code: planDoc.code, name: planDoc.name, pricePaise: planDoc.pricePaise, billingCycle: planDoc.billingCycle },
+                    planPricePaise: planItem.priceAtPurchasePaise || planDoc.pricePaise,
+                    status: latestOrder.status || null,
+                    endAt: null,
+                    addonSnapshot: (latestOrder.items || []).filter(i => i.type === 'addon').map(a => ({ addonId: a.itemId, name: a.name, qty: a.qty, pricePaise: a.priceAtPurchasePaise }))
+                  };
+                }
               }
             } catch (e) {
               console.error('Error fetching plan for latest order (step2):', e);
@@ -1618,7 +2253,7 @@ class CompanyService {
               totalTaxPaise: o.totals?.totalTaxPaise || 0,
               totalPayablePaise: o.totals?.totalPayablePaise || 0,
             },
-            payments: (o.payments || []).map(p => ({ method: p.method, amountPaise: p.amountPaise || 0, status: p.status })),
+            payments: [],
             final: { totalPaidPaise: o.final?.totalPaidPaise || 0, amountDuePaise: o.final?.amountDuePaise || 0 },
             createdAt: o.createdAt,
           })),
@@ -1628,7 +2263,7 @@ class CompanyService {
         const transactions = await transactionModel.find({ companyId }).sort({ createdAt: -1 }).limit(10).lean();
 
         return {
-          company: { _id: company._id, name: company.name, email: company.contact?.email || null, status: company.status },
+          company_id: company._id.toString(),
           plan: planData,
           orderSummary,
           transactions: transactions.map(t => ({ _id: t._id, type: t.type, amountPaise: t.amountPaise, source: t.source, description: t.description, createdAt: t.createdAt })),
@@ -1657,8 +2292,13 @@ class CompanyService {
             const planItem = (latestOrder.items || []).find(i => i.type === 'plan');
             if (planItem && planItem.itemId) {
               try {
-                const planDoc = await planModel.findById(planItem.itemId).lean();
-                if (planDoc) planSnapshot = { _id: planDoc._id, code: planDoc.code, name: planDoc.name, modulePermissions: planDoc.modulePermissions || [] };
+                if (company.planSnapshot && Object.keys(company.planSnapshot || {}).length) {
+                  const p = company.planSnapshot;
+                  planSnapshot = { _id: p._id || null, code: p.code, name: p.name, modulePermissions: p.modulePermissions || [] };
+                } else {
+                  const planDoc = await planModel.findById(planItem.itemId).lean();
+                  if (planDoc) planSnapshot = { _id: planDoc._id, code: planDoc.code, name: planDoc.name, modulePermissions: planDoc.modulePermissions || [] };
+                }
               } catch (e) { /* ignore */ }
             }
           }
@@ -1669,13 +2309,13 @@ class CompanyService {
         modules.forEach((m) => {
           if (Array.isArray(m.actions)) {
             m.actions.forEach((a) => {
-              if (a && a.key) modulePermissions.push(a.key);
+              if (a && a.key) modulePermissions.push(a.key.replace(/^saas\./, ''))
             });
           }
         });
 
         return {
-          company: { _id: company._id, name: company.name, email: company.contact?.email || null },
+          company_id: company._id.toString(),
           modulePermissions,
         };
       } catch (err) {
@@ -1683,7 +2323,48 @@ class CompanyService {
         throw err;
       }
     }
+
+        // Minimal projection for sync step 4: financial year, serial numbers
+        static async getCompanySyncStep4Data(companyId) {
+          try {
+            const company = await Company.findById(companyId).lean();
+            if (!company) return null;
+
+            // const fy = (company.settings && company.settings.financialYear) || null;
+            // const serials = (company.settings && company.settings.serialNumbers) || null;
+
+            return {
+              company_id: company._id.toString(),
+              // financialYear: fy,
+              // serialNumbers: serials,
+            };
+          } catch (err) {
+            console.error('Error in getCompanySyncStep4Data:', err);
+            throw err;
+          }
+        }
+
+        // Minimal projection for sync step 5: general settings
+        static async getCompanySyncStep5Data(companyId) {
+          try {
+            const company = await Company.findById(companyId).lean();
+            if (!company) return null;
+
+            // const general = (company.settings && company.settings.general) || company.settings || {};
+
+            return {
+              company_id: company._id.toString(),
+              // settings: general,
+            };
+          } catch (err) {
+            console.error('Error in getCompanySyncStep5Data:', err);
+            throw err;
+          }
+        }
 }
+
+// Export internal helpers for workers/tests
+CompanyService.activateSubscriptionIfEligible = activateSubscriptionIfEligible;
 
 module.exports = CompanyService;
 
