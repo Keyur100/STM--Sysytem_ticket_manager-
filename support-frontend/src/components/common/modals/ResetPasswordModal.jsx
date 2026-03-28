@@ -20,7 +20,7 @@ export default function ResetPasswordModal({ open, onClose }) {
       });
       onClose();
     } catch (err) {
-      setAlert({ open: true, title: "Error", message: err.response?.data?.message || err.message });
+      // setAlert({ open: true, title: "Error", message: err.response?.data?.error || err.message });
     }
   };
 

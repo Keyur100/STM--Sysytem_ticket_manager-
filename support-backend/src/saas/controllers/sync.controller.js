@@ -126,13 +126,22 @@ const webhookHandler = async (req, res) => {
 
 /**
  * POST /saas/:companyId/sync/step/:step
- * step values: 1,2,3
+ * step values: 1,2,3,4,5
+ * Determines URL based on company's plan trial status
  */
 const syncStep = async (req, res) => {
   try {
     const companyId = req.params.companyId;
     const step = String(req.params.step || '');
     if (!companyId) return res.status(400).json({ message: 'companyId required' });
+
+    // Get company details to check plan trial status
+    const company = await CompanyService.getCompanyFullDetails(companyId);
+    if (!company) return res.status(404).json({ message: 'Company not found' });
+
+    // Determine if plan has trial based on billingCycle in planSnapshot
+    const isTrial = company.planSnapshot?.name?.toLowerCase().includes("trial");
+    const syncType = isTrial ? 'trial' : 'actual';
 
     let payload = {};
     // Build step-specific payloads using lightweight helpers
@@ -164,16 +173,31 @@ const syncStep = async (req, res) => {
       return res.status(400).json({ message: 'Invalid step' });
     }
 
-    // allow step-specific remote url from config or fallback
-    const stepUrl = (config.remoteUrls && config.remoteUrls[step]) ? config.remoteUrls[step] : null;
+    // Select appropriate remote URLs based on trial status
+    const remoteUrlsMap = isTrial ? config.testRemoteUrls : config.actualRemoteUrls;
+    const stepUrl = remoteUrlsMap?.[step] || config.remoteUrl;
 
     try {
       const response = await sendSecureRequest(payload, stepUrl);
-      // record success log
-      await SyncLog.create({ companyId, step, status: 'success', message: 'OK', remoteResponse: response?.data || null });
-      return res.status(200).json({ message: 'Step sync successful', remote: response.data || null });
+      // record success log with sync type
+      await SyncLog.create({ 
+        companyId, 
+        step, 
+        status: 'success', 
+        message: 'OK',
+        type: syncType,
+        remoteResponse: response?.data || null 
+      });
+      return res.status(200).json({ message: 'Step sync successful', remote: response.data || null, syncType });
     } catch (err) {
-      await SyncLog.create({ companyId, step, status: 'failed', message: err.message || String(err), remoteResponse: err.response?.data || null });
+      await SyncLog.create({ 
+        companyId, 
+        step, 
+        status: 'failed', 
+        message: err.message || String(err),
+        type: syncType,
+        remoteResponse: err.response?.data || null 
+      });
       return res.status(502).json({ message: 'Remote call failed', error: err.message || String(err) });
     }
   } catch (err) {

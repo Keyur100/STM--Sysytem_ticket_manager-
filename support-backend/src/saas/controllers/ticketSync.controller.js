@@ -44,7 +44,7 @@ const updateTicketStatus = async (req, res) => {
     const payload = {
       id: ticketId,
       status,
-      comments_reply: comments_reply || [],
+      comments_reply: JSON.stringify(comments_reply) || [],
     };
 
     const resp = await sendSecureRequest(payload, updateUrl);

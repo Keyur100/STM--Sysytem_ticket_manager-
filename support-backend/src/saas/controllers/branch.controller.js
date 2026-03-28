@@ -7,8 +7,8 @@ const createBranch = async (req, res) => {
     const createdBy = req.user?._id;
     if (!payload.companyId || !payload.name) return sendError(res, 400, 'companyId and name required');
 
-    const branch = await BranchService.createBranch(payload, createdBy);
-    return sendSuccess(res, branch, 'Branch created');
+    const result = await BranchService.createBranch(payload, createdBy);
+    return sendSuccess(res, result, 'Branch created');
   } catch (err) {
     console.error('Error creating branch', err);
     return sendError(res, 500, err.message || 'Failed to create branch');

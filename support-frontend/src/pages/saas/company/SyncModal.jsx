@@ -31,6 +31,7 @@ export default function SyncModal({ open, onClose, companyId }) {
   const [running, setRunning] = useState({});
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState({});
+  const [company, setCompany] = useState(null);
 
   const fetchLogs = async () => {
     if (!companyId) return;
@@ -45,11 +46,26 @@ export default function SyncModal({ open, onClose, companyId }) {
     }
   };
 
+  const fetchCompanyDetails = async () => {
+    if (!companyId) return;
+    try {
+      const res = await api.get(`/saas/company/${companyId}/details`);
+      setCompany(res.data.company || null);
+    } catch (err) {
+      console.error('Failed to fetch company details', err);
+    }
+  };
 
   useEffect(() => {
-    if (open) fetchLogs();
+    if (open) {
+      fetchLogs();
+      fetchCompanyDetails();
+    }
+    // if (open) fetchCompanySummary();
   }, [open, companyId]);
 
+  // Sync modal should only show sync logs; company edit / client management
+  // is handled from the Companies list page.
 
   const runStep = async (step) => {
     if (!companyId) return;
@@ -82,6 +98,10 @@ export default function SyncModal({ open, onClose, companyId }) {
   const toggleExpanded = (id) =>
     setExpanded((e) => ({ ...e, [id]: !e[id] }));
 
+  // Determine sync type based on company's plan billingCycle
+  const isTrial = company?.planSnapshot?.billingCycle === 'TRIAL';
+  const runButtonText = isTrial ? 'TEST RUN' : 'ACTUAL RUN';
+
   return (
     <Dialog open={!!open} onClose={onClose} fullWidth maxWidth="sm">
       <DialogTitle>Stepwise Sync</DialogTitle>
@@ -93,6 +113,16 @@ export default function SyncModal({ open, onClose, companyId }) {
           </Box>
         ) : (
           <List>
+            {/* {companySummary && (
+              <Box sx={{ mb: 2, p: 1, border: '1px solid #eee', borderRadius: 1 }}>
+                <Typography variant="subtitle1">{companySummary.name || 'Company'}</Typography>
+                <Typography variant="caption">Code: {companySummary.code || '-'}</Typography>
+                <Typography variant="caption" sx={{ display: 'block' }}>Contact: {companySummary.contact?.email || '-'} / {companySummary.contact?.phone || '-'}</Typography>
+                <Box sx={{ mt: 1 }}>
+                  <Typography variant="caption">Open company from Companies list to edit</Typography>
+                </Box>
+              </Box>
+            )} */}
             {['1', '2', '3', '4', '5'].map((s) => {
               const last = lastStatusForStep(s);
               const history = logsForStep(s);
@@ -146,7 +176,7 @@ export default function SyncModal({ open, onClose, companyId }) {
                         {isRunning ? (
                           <CircularProgress size={16} />
                         ) : (
-                          'Run'
+                          runButtonText
                         )}
                       </Button>
 
@@ -263,6 +293,8 @@ export default function SyncModal({ open, onClose, companyId }) {
       <DialogActions>
         <Button onClick={onClose}>Close</Button>
       </DialogActions>
+
+      {/* company edit/manage modals removed — handled from Companies list */}
     </Dialog>
   );
 }

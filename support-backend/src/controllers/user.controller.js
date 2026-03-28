@@ -361,19 +361,22 @@ async function getTicketAssignableDeptWiseMembers  (req, res)  {
 };
 
 // 🔹 New: reset password
-async function resetPassword(req,res) {
-  const {oldPassword,newPassword} = req.body
-  const userId = req.user._id
-  const user = await UserAuth.findById(userId);
-  if (!user) throw new Error("User not found");
+async function resetPassword(req, res) {
+  try {
+    const { oldPassword, newPassword } = req.body;
+    const userId = req.user._id;
+    const user = await UserAuth.findById(userId);
+    if (!user) throw new Error("User not found");
 
-  const valid = await comparePassword(oldPassword, user.passwordHash);
-  if (!valid) throw new Error("Old password is incorrect");
+    const valid = await comparePassword(oldPassword, user.passwordHash);
+    if (!valid) throw new Error("Old password is incorrect");
 
-  user.passwordHash = await hashPassword(newPassword);
-  await user.save();
-  return sendSuccess(res, {}, "Password updated");
-
+    user.passwordHash = await hashPassword(newPassword);
+    await user.save();
+    return sendSuccess(res, {}, "Password updated");
+  } catch (error) {
+    return sendError(res, 500, error.message);
+  }
 }
 module.exports ={
   createUser,

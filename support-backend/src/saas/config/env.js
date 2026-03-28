@@ -12,15 +12,26 @@ module.exports = {
   // Sync 3rd party api call
   apiKey: process.env.SYNC_API_KEY,
   apiSecret: process.env.SYNC_API_SECRET,
-  remoteUrl: process.env.SYNC_REMOTE_URL,
-  // Optional per-step remote URLs (overrides `remoteUrl` when set)
-  remoteUrls: {
-    '1': process.env.SYNC_REMOTE_URL_1 || process.env.SYNC_REMOTE_URL,
-    '2': process.env.SYNC_REMOTE_URL_2 || process.env.SYNC_REMOTE_URL,
-    '3': process.env.SYNC_REMOTE_URL_3 || process.env.SYNC_REMOTE_URL,
-    '4': process.env.SYNC_REMOTE_URL_4 || process.env.SYNC_REMOTE_URL,
-    '5': process.env.SYNC_REMOTE_URL_5 || process.env.SYNC_REMOTE_URL,
+  baseTestUrl: process.env.BASE_TEST_URL || 'http://testing.edobiz.in/api/v1',
+  baseActualUrl: process.env.BASE_ACTUAL_URL || 'http://app.edobiz.in/api/v1',
+  // Optional per-step remote URLs for test environment
+  testRemoteUrls: {
+    '1': process.env.SYNC_REMOTE_URL_1 || 'http://testing.edobiz.in/api/v1/company/provision/step1',
+    '2': process.env.SYNC_REMOTE_URL_2 || 'http://testing.edobiz.in/api/v1/company/provision/step2',
+    '3': process.env.SYNC_REMOTE_URL_3 || 'http://testing.edobiz.in/api/v1/company/provision/step3',
+    '4': process.env.SYNC_REMOTE_URL_4 || 'http://testing.edobiz.in/api/v1/company/provision/step4',
+    '5': process.env.SYNC_REMOTE_URL_5 || 'http://testing.edobiz.in/api/v1/company/provision/step5',
   },
+  // Per-step remote URLs for actual environment
+  actualRemoteUrls: {
+    '1': process.env.SYNC_ACTUAL_REMOTE_URL_1 || 'http://app.edobiz.in/api/v1/company/provision/step1',
+    '2': process.env.SYNC_ACTUAL_REMOTE_URL_2 || 'http://app.edobiz.in/api/v1/company/provision/step2',
+    '3': process.env.SYNC_ACTUAL_REMOTE_URL_3 || 'http://app.edobiz.in/api/v1/company/provision/step3',
+    '4': process.env.SYNC_ACTUAL_REMOTE_URL_4 || 'http://app.edobiz.in/api/v1/company/provision/step4',
+    '5': process.env.SYNC_ACTUAL_REMOTE_URL_5 || 'http://app.edobiz.in/api/v1/company/provision/step5',
+  },
+  // Fallback for both environments
+  remoteUrl: process.env.SYNC_REMOTE_URL || 'http://testing.edobiz.in/api/v1',
   requestTimeout: 20000,
   allowedTimeWindow: 5 * 60 * 1000, // 5 minutes
 };

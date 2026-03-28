@@ -77,9 +77,13 @@ export default function CompanyFormStepper() {
         phone: companyDetails.contact?.phone || "",
         address: companyDetails.contact?.address || "",
       },
-      // plan may be stored as { planSnapshot: {...} } or as a plain snapshot
-      plan: (companyDetails.plan && (companyDetails.plan.planSnapshot || companyDetails.plan)) || null,
+      // planSnapshot is stored in company model and prefilled as 'plan' in form
+      plan: companyDetails.planSnapshot || null,
       selectedAddons: companyDetails.selectedAddons || {},
+      // Persisted branchId (newer backend) or fallback to first branch
+      branchId: companyDetails.branchId || (companyDetails.branches && companyDetails.branches[0] ? companyDetails.branches[0]._id : null),
+      // Persisted client user reference (newer backend)
+      clientId: companyDetails.clientId || companyDetails.clientId || null,
       // Prefill branch defaults from company
       branchCompanyName: companyDetails.name || "",
       branchName: companyDetails.name || "",
@@ -106,6 +110,27 @@ export default function CompanyFormStepper() {
         branchPan: b.pan || f.branchPan,
         branchLogo: b.logo || f.branchLogo,
       }));
+    }
+    // If company has a primary client user id, fetch it and prefill contact fields
+    if (companyDetails.clientId) {
+      (async () => {
+        try {
+          const res = await api.get(`/saas/client-users/${companyDetails.clientId}`);
+          const wrapper = res?.data || res;
+          const client = wrapper?.data?.clientUser || wrapper?.clientUser || wrapper?.data || wrapper;
+          if (client) {
+            setForm((f) => ({ ...f, contact: {
+              personName: client.name || f.contact?.personName || '',
+              email: client.email || f.contact?.email || '',
+              phone: client.phone || f.contact?.phone || '',
+              address: f.contact?.address || '',
+            } }));
+            try { handleChange('contact.personName', client.name); handleChange('contact.email', client.email); handleChange('contact.phone', client.phone); } catch (e) {}
+          }
+        } catch (e) {
+          // ignore fetch errors
+        }
+      })();
     }
   }, [id, companyDetails]);
 
@@ -135,6 +160,7 @@ export default function CompanyFormStepper() {
           panNo: form.panNo,
           gstNo: form.gstNo,
           contact: form.contact,
+          code: form.code,
         };
         const action = await dispatch(createDraftCompany(draftPayload));
         // If the action failed (validation / isExist), do not proceed
@@ -155,6 +181,7 @@ export default function CompanyFormStepper() {
               panNo: form.panNo,
               gstNo: form.gstNo,
               contact: form.contact,
+              code: form.code,
             },
           })
         );
@@ -199,9 +226,19 @@ export default function CompanyFormStepper() {
               setForm((f) => ({ ...f, branchCreated: true }));
             } else {
               const res = await api.post('/saas/branch', payload);
-              const created = res?.data || res;
+              const wrapper = res?.data || res;
+              const created = wrapper.data || wrapper;
+              // Try multiple shapes: created may be branch doc or { branch, clientUser }
+              const newBranchId = created?._id || created?.id || created?.branch?._id || created?.branch?.id || (wrapper?.data?.branch?._id) || (wrapper?.branch?._id) || null;
+              const newClientId = created?.clientUser?._id || created?.clientUser?.id || created?.clientUserId || wrapper?.data?.clientUser?._id || wrapper?.clientUser?._id || null;
               // mark branch created and store returned id to allow future updates
-              setForm((f) => ({ ...f, branchCreated: true, branchId: created._id || created.id || f.branchId }));
+              setForm((f) => ({ ...f, branchCreated: true, branchId: newBranchId || f.branchId, clientId: newClientId || f.clientId }));
+              // Also update via handleChange to ensure dependent effects see the branchId and clientId immediately
+              try {
+                if (newBranchId) handleChange('branchId', newBranchId);
+                if (newClientId) handleChange('clientId', newClientId);
+                if (newBranchId) handleChange('branchCreated', true);
+              } catch (e) {}
             }
           } catch (err) {
             console.error('Failed to create/update branch from stepper', err);

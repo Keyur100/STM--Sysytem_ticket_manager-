@@ -13,7 +13,6 @@ const trialPlans = [
     userPricing: {
       max_employees: 2,
       max_branch: 1,
-      max_reseller: 1,
       max_customers: 10,
       max_suppliers: 5,
       storageMB: 512,
@@ -33,7 +32,6 @@ const trialPlans = [
     userPricing: {
       max_employees: 5,
       max_branch: 1,
-      max_reseller: 1,
       max_customers: 20,
       max_suppliers: 10,
       storageMB: 1024,
@@ -68,7 +66,6 @@ const monthlyPlans = [
     userPricing: {
       max_employees: [5, 10, 20, 50, 100, 200, 500][index],
       max_branch: [1, 2, 5, 10, 20, 50, 100][index],
-      max_reseller: [1, 2, 5, 10, 20, 50, 100][index],
       max_customers: [50, 100, 200, 500, 1000, 2000, 5000][index],
       max_suppliers: [20, 50, 100, 200, 500, 1000, 2000][index],
       storageMB: [1024, 2048, 4096, 8192, 16384, 32768, 65536][index],
@@ -132,9 +129,9 @@ const defaultPlan = [{
 }]
 
 module.exports = {
-  trial: trialPlans,
   monthly: monthlyPlans,
   halfYearly: halfYearlyPlans,
   yearly: yearlyPlans,
+  trial: trialPlans,
   defaultPlan
 };

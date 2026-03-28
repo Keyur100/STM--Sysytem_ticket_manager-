@@ -297,6 +297,16 @@ const deleteCompany = async (req, res) => {
   }
 };
 
+const deleteAllCompanies = async (req, res) => {
+  try {
+    const result = await CompanyService.deleteAllCompanyData();
+    return sendSuccess(res, result, "All companies and related records deleted successfully");
+  } catch (err) {
+    console.error('Error deleting all companies:', err);
+    return sendError(res, 500, err.message || 'Failed to delete all records');
+  }
+};
+
 const listDeletedCompanies = async (req, res) => {
   try {
     const result = await CompanyService.listDeletedCompanies(req.query || {});
@@ -388,6 +398,7 @@ module.exports = {
   downgradeSubscription,
   purchaseAddons,
   deleteCompany,
+  deleteAllCompanies,
   listDeletedCompanies,
   restoreCompany,
   getPaymentHistory,

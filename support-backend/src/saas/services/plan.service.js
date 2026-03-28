@@ -244,7 +244,7 @@ static async getAllPlans({ isActive = true, planGroup, billingCycle, search, pag
 
   const total = await Plan.countDocuments(filter);
   const plans = await Plan.find(filter)
-    .sort({ createdAt: -1 })
+    .sort({ createdAt: 1 })
     .skip((page - 1) * limit)
     .limit(limit)
     .lean();

@@ -101,8 +101,8 @@ export default function PlanSettingsStep({ form, handleChange, plansOverride = n
           // Plan stored flags may be named `enabled` or `visible` on actions; prefer `enabled` then `visible`
           const enabled = (typeof a.enabled !== 'undefined') ? normalizeFlag(a.enabled) : (typeof a.visible !== 'undefined' ? normalizeFlag(a.visible) : false);
           return {
-            key: a.key,
-            displayName: a.displayName || a.key,
+            ...a,
+            displayName: a.displayName || a.label || a.key,
             enabled,
           };
         });
@@ -454,7 +454,7 @@ const PlanDetailPanel = React.memo(
             name="pricePaise"
             label="Plan Price (₹)"
             type="number"
-            value={selectedPlan.pricePaise ? selectedPlan.pricePaise / 100 : ""}
+            value={selectedPlan.pricePaise !== undefined && selectedPlan.pricePaise !== null ? selectedPlan.pricePaise / 100 : ""}
             onChange={(e) => onPriceChange(e.target.value)}
             sx={{ width: 220, mr: 2 }}
             error={Number(selectedPlan.pricePaise || 0) < 0}
@@ -465,7 +465,7 @@ const PlanDetailPanel = React.memo(
             name="durationDays"
             label="Duration (Days)"
             type="number"
-            value={selectedPlan.durationDays || ""}
+            value={selectedPlan.durationDays !== undefined && selectedPlan.durationDays !== null ? selectedPlan.durationDays : ""}
             onChange={(e) => onDurationChange(e.target.value)}
             sx={{ width: 220 }}
             error={Number(selectedPlan.durationDays || 0) < 0}
@@ -527,7 +527,6 @@ const UserLimitFields = memo(({ form, onMaxChange }) => {
     { key: "max_suppliers", label: "Max Suppliers" },
     { key: "max_branch", label: "Max Branches" },
     { key: "max_customers", label: "Max Customers" },
-    { key: "max_reseller", label: "Max Resellers" },
     { key: "storageMB", label: "Storage (MB)" },
   ];
 

@@ -42,6 +42,11 @@ module.exports = {
 
     // SAAS Subscription Workers
     {
+      name: "saas-notification-worker",
+      script: "src/saas/workers/notificationWorker.js",
+      watch: false
+    },
+    {
       name: "subscription-expiry-worker",
       script: "src/workers/saas/subscriptionExpiryWorker.js",
       watch: false

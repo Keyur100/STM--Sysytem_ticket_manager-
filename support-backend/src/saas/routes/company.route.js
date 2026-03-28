@@ -9,6 +9,8 @@ const validation = require("../../middlewares/validation");
 
 const companyValidator = require("../validators/company.validator");
 
+const clientUserController = require('../controllers/clientUser.controller');
+
 // Signup company
 router.post(
   "/signup",
@@ -24,6 +26,8 @@ router.post(
   rbac("company_create"),
   tryCatch(companyController.draft)
 );
+
+
 // Get single company
 router.get(
   "/:companyId",
@@ -33,6 +37,9 @@ router.get(
 );
 
 router.get("/:companyId/details", authJwt, rbac("company_view"), companyController.getCompanyDetails);
+
+// Basic company fetch (used by Sync modal)
+router.get('/:companyId/basic', authJwt, rbac('company_view'), tryCatch(require('../controllers/companyBasic.controller').getCompany));
 
 // Get company full details (plan, orders, payments, wallet, transactions)
 router.get("/:companyId/full-details", authJwt, rbac("company_view"), tryCatch(companyController.getFullDetails));
@@ -115,6 +122,9 @@ router.get(
   tryCatch(syncController.getSyncLogs)
 );
 
+// // Global client users listing (no companyId) - frontend can call with ?all=true
+// router.get('/client-users', authJwt, rbac('company_view'), tryCatch(require('../controllers/clientUser.controller').listClientUsers));
+
 // Usage update endpoint: external systems may call to increment/decrement usage counts
 // Body: { adjustments: [{ key: 'max_employees', delta: 1 }, ...] }
 // For security, provide INTERNAL_USAGE_KEY env var and include header 'x-internal-key'
@@ -130,6 +140,7 @@ router.put(
   rbac("company_update"),
   tryCatch(require("../controllers/companyBranch.controller").updateBranchAdmin)
 );
+
 
 // Fetch company statistics from remote API (proxy)
 router.post(
@@ -192,11 +203,19 @@ router.get(
   tryCatch(companyController.list)
 );
 
+// Delete all companies and related records
+router.delete(
+  "/all",
+  authJwt,
+  rbac("saas.company_delete"),
+  tryCatch(companyController.deleteAllCompanies)
+);
+
 // Soft delete company (and cascade soft-delete related records)
 router.delete(
   "/:companyId",
   authJwt,
-  rbac("company.delete"),
+  rbac("saas.company_delete"),
   tryCatch(companyController.deleteCompany)
 );
 

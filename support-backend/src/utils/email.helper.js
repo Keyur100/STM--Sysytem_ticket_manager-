@@ -46,7 +46,57 @@ async function sendPasswordResetEmail({ to, token }) {
   return sendMail({ to, subject, html, text: `Reset your password: ${resetUrl}` });
 }
 
+/**
+ * Send 90% subscription usage reminder email
+ */
+async function sendSubscriptionReminderEmail({ to, companyName, subscriptionEndDate, planName }) {
+  const subject = 'Subscription Usage Reminder – 90% Threshold Reached';
+  const html = `
+    <h2>Subscription Usage Reminder</h2>
+    <p>Hi ${companyName || 'Valued Customer'},</p>
+    <p>Your subscription for the <strong>${planName || 'Pro Plan'}</strong> has reached <strong>90%</strong> of its usage cycle.</p>
+    <p><strong>Subscription End Date:</strong> ${subscriptionEndDate || 'N/A'}</p>
+    <p>To ensure uninterrupted service, please consider renewing or upgrading your subscription.</p>
+    <p>
+      <a href="${FRONTEND_URL || 'http://localhost:3000'}/companies" 
+         style="display: inline-block; padding: 10px 20px; background-color: #007bff; color: white; text-decoration: none; border-radius: 5px;">
+        Manage Subscription
+      </a>
+    </p>
+    <p>If you have any questions, please contact our support team.</p>
+    <p>Best regards,<br/>The Team</p>
+  `;
+  const text = `Your ${planName || 'Pro Plan'} subscription has reached 90% of its usage cycle. Subscription End Date: ${subscriptionEndDate || 'N/A'}. Please consider renewing or upgrading.`;
+  return sendMail({ to, subject, html, text });
+}
+
+/**
+ * Send subscription expiry notification email
+ */
+async function sendSubscriptionExpiryEmail({ to, companyName, planName, expiryDate }) {
+  const subject = 'Subscription Expired – Please Renew';
+  const html = `
+    <h2>Your Subscription Has Expired</h2>
+    <p>Hi ${companyName || 'Valued Customer'},</p>
+    <p>Your subscription for the <strong>${planName || 'Pro Plan'}</strong> has expired as of <strong>${expiryDate || 'today'}</strong>.</p>
+    <p>To continue using our services without interruption, please renew your subscription immediately.</p>
+    <p>
+      <a href="${FRONTEND_URL || 'http://localhost:3000'}/companies" 
+         style="display: inline-block; padding: 10px 20px; background-color: #dc3545; color: white; text-decoration: none; border-radius: 5px;">
+        Renew Subscription Now
+      </a>
+    </p>
+    <p>Your account access may be restricted if not renewed soon.</p>
+    <p>Questions? Contact our support team.</p>
+    <p>Best regards,<br/>The Team</p>
+  `;
+  const text = `Your ${planName || 'Pro Plan'} subscription has expired. Please renew your subscription immediately to continue using our services.`;
+  return sendMail({ to, subject, html, text });
+}
+
 module.exports = {
   sendMail,
   sendPasswordResetEmail,
+  sendSubscriptionReminderEmail,
+  sendSubscriptionExpiryEmail,
 };

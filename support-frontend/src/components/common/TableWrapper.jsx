@@ -18,6 +18,7 @@ import {
   Stack,
   Tooltip,
 } from "@mui/material";
+
 import EditIcon from "@mui/icons-material/Edit";
 import DeleteIcon from "@mui/icons-material/Delete";
 import AddCircleIcon from "@mui/icons-material/AddCircle";
@@ -25,7 +26,6 @@ import VisibilityIcon from "@mui/icons-material/Visibility";
 
 import usePermissions from "../../helpers/hooks/usePermissions";
 import AlertDialog from "./modals/AlertDialog";
-
 
 export default function TableWrapper({
   headerLabel = "Records",
@@ -56,7 +56,6 @@ export default function TableWrapper({
   const { hasPermission } = usePermissions();
 
   const [searchText, setSearchText] = useState("");
-
   const [openDialog, setOpenDialog] = useState(false);
   const [selectedRow, setSelectedRow] = useState(null);
 
@@ -76,6 +75,34 @@ export default function TableWrapper({
     setSelectedRow(null);
   };
 
+  // ✏️ Edit logic
+  const canEdit = (row) => {
+    if (!hasPermission(editPerm) || hideEdit || !onEdit) return false;
+
+    if (headerLabel === "Companies") {
+      return row.status === "draft";
+    }
+
+    return true;
+  };
+
+  // 👁 View logic
+  const canView = (row) => {
+    if (!onView || hideView) return false;
+
+    if (headerLabel === "Companies") {
+      return row.status !== "draft";
+    }
+
+    return true;
+  };
+
+  // Show actions column
+  const canShowActionsColumn =
+    (hasPermission(editPerm) && !hideEdit && onEdit) ||
+    (!hideDelete && hasPermission(deletePerm) && onDelete) ||
+    (onView && !hideView);
+
   return (
     <Box>
       {/* 🔹 Toolbar */}
@@ -83,10 +110,8 @@ export default function TableWrapper({
         <Typography variant="h6" sx={{ fontWeight: 600 }}>
           {headerLabel}
         </Typography>
-        
 
         <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-          {/* Search inside toolbar */}
           <TextField
             size="small"
             placeholder={searchPlaceHolder || "Search..."}
@@ -112,13 +137,10 @@ export default function TableWrapper({
               {addLabel}
             </Button>
           )}
-          {/* <Box>
-                      <Button variant="outlined" onClick={() => navigate(-1)} sx={{ mr: 1 }}>Back</Button>
-                    </Box> */}
         </Box>
       </Toolbar>
 
-      {/* 🔹 Responsive Table */}
+      {/* 🔹 Table */}
       <TableContainer
         component={Paper}
         sx={{
@@ -149,99 +171,124 @@ export default function TableWrapper({
                   )}
                 </TableCell>
               ))}
-              {(() => {
-                const showActions =
-                  (hasPermission(editPerm) && !hideEdit) ||
-                  (!hideDelete && hasPermission(deletePerm)) ||
-                  (onView && !hideView);
-                return showActions ? (
-                  <TableCell align="center">
-                    <b>Actions</b>
-                  </TableCell>
-                ) : null;
-              })()}
+
+              {canShowActionsColumn && (
+                <TableCell align="center">
+                  <b>Actions</b>
+                </TableCell>
+              )}
             </TableRow>
           </TableHead>
 
           <TableBody>
-            {data.map((row) => (
-              <TableRow
-                key={row._id || row.userId}
-                hover
-                sx={{
-                  "&:hover": { backgroundColor: "action.hover" },
-                }}
-              >
-                {columns.map((c) => (
-                  <TableCell key={c.field}>
-                    {c.render ? c.render(row) : row[c.field]}
-                  </TableCell>
-                ))}
+            {data.map((row) => {
+              const showDelete =
+                !hideDelete && hasPermission(deletePerm) && onDelete;
 
-                {(() => {
-                  const showActions =
-                    (hasPermission(editPerm) && !hideEdit) ||
-                    (!hideDelete && hasPermission(deletePerm)) ||
-                    (onView && !hideView);
-                  if (!showActions) return null;
+              const showEdit =
+                hasPermission(editPerm) && !hideEdit && onEdit;
 
-                  return (
+              const showView = onView && !hideView;
+
+              return (
+                <TableRow
+                  key={row._id || row.userId}
+                  hover
+                  sx={{ "&:hover": { backgroundColor: "action.hover" } }}
+                >
+                  {columns.map((c) => (
+                    <TableCell key={c.field}>
+                      {c.render ? c.render(row) : row[c.field]}
+                    </TableCell>
+                  ))}
+
+                  {canShowActionsColumn && (
                     <TableCell align="center">
                       <Stack direction="row" justifyContent="center" spacing={1}>
-                        {hasPermission(editPerm) && !hideEdit && onEdit && (
-                          <Tooltip title="Edit" arrow>
-                            <IconButton
-                              color="primary"
-                              size="small"
-                              onClick={() => onEdit(row)}
-                              sx={{
-                                "&:hover": { backgroundColor: "rgba(33, 150, 243, 0.1)" },
-                              }}
-                            >
-                              <EditIcon fontSize="small" />
-                            </IconButton>
+                        
+                        {/* ✏️ Edit */}
+                        {showEdit && (
+                          <Tooltip
+                            title={
+                              headerLabel === "Companies" &&
+                              row.status !== "draft"
+                                ? "Only draft companies can be edited"
+                                : "Edit"
+                            }
+                            arrow
+                          >
+                            <span>
+                              <IconButton
+                                color="primary"
+                                size="small"
+                                disabled={!canEdit(row)}
+                                onClick={() =>
+                                  canEdit(row) && onEdit(row)
+                                }
+                                sx={{
+                                  opacity: canEdit(row) ? 1 : 0.4,
+                                }}
+                              >
+                                <EditIcon fontSize="small" />
+                              </IconButton>
+                            </span>
                           </Tooltip>
                         )}
 
-                        {!hideDelete && hasPermission(deletePerm) && onDelete && (
+                        {/* 🗑 Delete */}
+                        {showDelete && (
                           <Tooltip title="Delete" arrow>
                             <IconButton
                               color="error"
                               size="small"
                               onClick={() => handleDeleteClick(row)}
-                              sx={{
-                                "&:hover": { backgroundColor: "rgba(244, 67, 54, 0.1)" },
-                              }}
                             >
                               <DeleteIcon fontSize="small" />
                             </IconButton>
                           </Tooltip>
                         )}
 
-                        {onView && !hideView && (
-                          <Tooltip title="View" arrow>
-                            <IconButton
-                              color="secondary"
-                              size="small"
-                              onClick={() => onView(row)}
-                              sx={{
-                                "&:hover": { backgroundColor: "rgba(156, 39, 176, 0.1)" },
-                              }}
-                            >
-                              <VisibilityIcon fontSize="small" />
-                            </IconButton>
+                        {/* 👁 View */}
+                        {showView && (
+                          <Tooltip
+                            title={
+                              headerLabel === "Companies" &&
+                              row.status === "draft"
+                                ? "Draft cannot be viewed"
+                                : "View"
+                            }
+                            arrow
+                          >
+                            <span>
+                              <IconButton
+                                color="secondary"
+                                size="small"
+                                disabled={!canView(row)}
+                                onClick={() =>
+                                  canView(row) && onView(row)
+                                }
+                                sx={{
+                                  opacity: canView(row) ? 1 : 0.4,
+                                }}
+                              >
+                                <VisibilityIcon fontSize="small" />
+                              </IconButton>
+                            </span>
                           </Tooltip>
                         )}
                       </Stack>
                     </TableCell>
-                  );
-                })()}
-              </TableRow>
-            ))}
+                  )}
+                </TableRow>
+              );
+            })}
 
             {data.length === 0 && (
               <TableRow>
-                <TableCell colSpan={columns.length + ( (hasPermission(editPerm) && !hideEdit) || (!hideDelete && hasPermission(deletePerm)) || (onView && !hideView) ? 1 : 0 )} align="center">
+                <TableCell
+                  colSpan={columns.length + (canShowActionsColumn ? 1 : 0)}
+                  align="center"
+                >
                   No records found
                 </TableCell>
               </TableRow>
@@ -257,11 +304,13 @@ export default function TableWrapper({
         page={page}
         onPageChange={(_, newPage) => onPageChange(newPage)}
         rowsPerPage={rowsPerPage}
-        onRowsPerPageChange={(e) => onRowsPerPageChange(parseInt(e.target.value, 10))}
+        onRowsPerPageChange={(e) =>
+          onRowsPerPageChange(parseInt(e.target.value, 10))
+        }
         rowsPerPageOptions={[5, 10, 25, 50]}
       />
 
-      {/* 🔹 Delete Confirmation */}
+      {/* 🔹 Delete Dialog */}
       {!hideDelete && (
         <AlertDialog
           open={openDialog}

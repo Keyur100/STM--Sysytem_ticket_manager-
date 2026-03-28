@@ -349,7 +349,6 @@ const App = () => {
     switch(key) {
       case 'max_employees': return 'Employees';
       case 'max_branch': return 'Branches';
-      case 'max_reseller': return 'Resellers';
       case 'max_customers': return 'Customers';
       case 'max_suppliers': return 'Suppliers';
       case 'storageMB': return 'Storage';

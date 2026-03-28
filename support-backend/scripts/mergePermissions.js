@@ -98,7 +98,7 @@ function writeModules(modules, modulesAbs) {
     header +
     `const planExclusions = require("./planExclusions");\n` +
     `const allModules = ${JSON.stringify(modules, null, 2)}\n\n` +
-    `module.exports = {\n  allModules,\n\n  getPlanPermissions:(planName)=> {\n    const plan = planExclusions[planName] || {};\n    const { excludeModules = [], excludeActions = {} } = plan;\n    return allModules\n      .filter((module) => !excludeModules.includes(module.moduleKey))\n      .map((module) => {\n        const moduleKey = module.moduleKey;\n        const excluded = excludeActions[moduleKey] || [];\n        const allowedActions = module.actions.filter((a) => !excluded.includes(a.key));\n        return { moduleKey, displayName: module.displayName, visible: true, actions: allowedActions.map((a) => ({ key: a.key, visible:true })) };\n      });\n  }\n};\n`;
+    `module.exports = {\n  allModules,\n\n  getPlanPermissions:(planName)=> {\n    const plan = planExclusions[planName] || {};\n    const { excludeModules = [], excludeActions = {} } = plan;\n    return allModules\n      .filter((module) => !excludeModules.includes(module.moduleKey))\n      .map((module) => {\n        const moduleKey = module.moduleKey;\n        const excluded = excludeActions[moduleKey] || [];\n        const allowedActions = module.actions.filter((a) => !excluded.includes(a.key));\n        return { moduleKey, displayName: module.displayName, visible: true, actions: allowedActions.map((a) => ({ ...a, displayName: a.label || a.displayName || a.key, visible: true })) };\n      });\n  }\n};\n`;
 
   fs.writeFileSync(modulesAbs, content, 'utf8');
   console.log(`modules.data.js updated successfully at ${modulesAbs}`);

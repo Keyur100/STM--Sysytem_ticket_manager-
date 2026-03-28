@@ -1,34 +1,57 @@
 const Branch = require('../models/branch.model');
 const ClientUser = require('../models/clientUser.model');
+const Company = require('../models/company.model');
 const bcrypt = require('bcrypt');
 
 class BranchService {
-  static async createBranch(payload, createdBy) {
-    const {
-      companyId,
-      name,
-      code,
-      companyName,
-      tagline,
-      address,
-      logo,
-      phone,
-      phone2,
-      email,
-      gstn,
-      pan,
-      status,
-      contactInfo,
-      contactPerson, // { name, email, phone }
-    } = payload;
+ static async createBranch(payload, createdBy) {
+  const {
+    companyId,
+    name,
+    code,
+    companyName,
+    tagline,
+    address,
+    logo,
+    phone,
+    phone2,
+    email,
+    gstn,
+    pan,
+    status,
+    contactInfo,
+    contactPerson,
+  } = payload;
 
-    // Ensure branch code uniqueness per company (if provided)
-    if (code) {
-      const exists = await Branch.findOne({ companyId, code }).lean().catch(() => null);
-      if (exists) throw new Error('Branch code already exists for this company');
-    }
+  // =========================
+  // 🏢 BRANCH (1 per company)
+  // =========================
+  let branch = await Branch.findOne({ companyId });
 
-    const branch = await Branch.create({
+  if (branch) {
+    // 🔄 UPDATE
+    branch = await Branch.findByIdAndUpdate(
+      branch._id,
+      {
+        code,
+        companyName,
+        name,
+        tagline,
+        address,
+        logo,
+        phone,
+        phone2,
+        email,
+        gstn,
+        pan,
+        status,
+        contactInfo,
+      },
+      { new: true }
+    );
+  } else {
+    // ➕ CREATE
+    branch = await Branch.create({
       companyId,
       code,
       companyName,
@@ -44,37 +67,64 @@ class BranchService {
       status,
       contactInfo,
     });
+  }
 
-    // Optionally create a client user for this branch
-    if (contactPerson && contactPerson.email && contactPerson.name) {
-      // const defaultPassword = 'R@ndom@12345';
-      // const salt = await bcrypt.genSalt(10);
-      // const hash = await bcrypt.hash(defaultPassword, salt);
+  // Persist primary branch reference on company (best-effort)
+  try {
+    if (branch && branch._id && companyId) {
+      await Company.findByIdAndUpdate(companyId, { $set: { branchId: branch._id } }).catch(() => null);
+    }
+  } catch (e) {
+    // swallow errors to avoid breaking flow
+  }
 
-      // Ensure client user email uniqueness within company
-      const existingUser = await ClientUser.findOne({ companyId, email: contactPerson.email }).catch(() => null);
-      if (existingUser) {
-        // If a client user already exists for this company, associate it to this branch instead of failing.
-        try {
-          existingUser.branchId = existingUser.branchId || branch._id;
-          await ClientUser.updateOne({ _id: existingUser._id }, { $set: { branchId: branch._id } });
-        } catch (e) {
-          // fallback: do nothing
+  // =========================
+  // 👤 CLIENT USER (1 per company)
+  // =========================
+  let clientUser = null;
+  if (contactPerson?.email && contactPerson?.name) {
+    clientUser = await ClientUser.findOne({ companyId }).catch(() => null);
+
+    if (clientUser) {
+      // 🔄 UPDATE
+      await ClientUser.updateOne(
+        { _id: clientUser._id },
+        {
+          $set: {
+            name: contactPerson.name,
+            email: contactPerson.email,
+            phone: contactPerson.phone || null,
+            branchId: branch._id,
+          }
         }
-      } else {
-        await ClientUser.create({
-          companyId,
-          branchId: branch._id,
-          name: contactPerson.name,
-          email: contactPerson.email,
-          phone: contactPerson.phone || null,
-          // passwordHash: hash,
-        });
-      }
+      ).catch(() => null);
+      // reload updated clientUser
+      clientUser = await ClientUser.findById(clientUser._id).lean().catch(() => null);
+    } else {
+      // ➕ CREATE
+      clientUser = await ClientUser.create({
+        companyId,
+        branchId: branch._id,
+        name: contactPerson.name,
+        email: contactPerson.email,
+        phone: contactPerson.phone || null,
+      }).catch(() => null);
     }
 
-    return branch;
+    // Persist primary client reference on company (best-effort)
+    try {
+      if (clientUser && clientUser._id && companyId) {
+        await Company.findByIdAndUpdate(companyId, { $set: { clientId: clientUser._id } }).catch(() => null);
+      }
+    } catch (e) {
+      // swallow errors
+    }
   }
+
+  // Return both branch and clientUser (if any) for caller convenience
+  const branchObj = branch && branch.toObject ? branch.toObject() : branch;
+  return { branch: branchObj, clientUser };
+}
 
   static async listBranchesByCompany(companyId, { page = 1, limit = 50 } = {}) {
     const skip = (page - 1) * limit;

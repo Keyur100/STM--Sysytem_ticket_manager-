@@ -4169,7 +4169,12 @@ module.exports = {
         const moduleKey = module.moduleKey;
         const excluded = excludeActions[moduleKey] || [];
         const allowedActions = module.actions.filter((a) => !excluded.includes(a.key));
-        return { moduleKey, displayName: module.displayName, visible: true, actions: allowedActions.map((a) => ({ key: a.key, visible:true })) };
+        return {
+          moduleKey,
+          displayName: module.displayName,
+          visible: true,
+          actions: allowedActions.map((a) => ({ ...a, displayName: a.label || a.displayName || a.key, visible: true })),
+        };
       });
   }
 };

@@ -1,24 +1,63 @@
 import React, { useEffect } from "react";
 import { Box, Grid, Typography } from "@mui/material";
+import api from "../../../../api/axios";
 import RequiredTextField from '../../../../components/form/RequiredTextField';
 
 export default function BranchStep({ form, handleChange }) {
   useEffect(() => {
+    let mounted = true;
+
+    const fetchBranch = async (branchId) => {
+      try {
+        const res = await api.get(`/saas/branch/${branchId}`);
+        const wrapper = res?.data || {};
+        const b = wrapper.data || wrapper;
+        if (!mounted || !b) return;
+
+        // Populate branch fields from branch record
+        handleChange('branchId', b._id || b.id || branchId);
+        handleChange('branchCode', b.code || '');
+        handleChange('branchCompanyName', b.companyName || form.name || '');
+        handleChange('branchName', b.name || form.name || '');
+        handleChange('branchTagline', b.tagline || '');
+        handleChange('branchAddress', b.address || (form.contact && form.contact.address) || '');
+        handleChange('branchPhone', b.phone || '');
+        handleChange('branchPhone2', b.phone2 || '');
+        handleChange('branchEmail', b.email || '');
+        handleChange('branchGstn', b.gstn || '');
+        handleChange('branchPan', b.pan || '');
+        handleChange('branchLogo', b.logo || '');
+        handleChange('branchContactInfo', b.contactInfo || '');
+      } catch (e) {
+        // ignore — fallback to company-prefill below
+      }
+    };
+
+    // If branchId is set (editing an existing branch), prefer fetching branch from API
+    if (form.branchId) {
+      fetchBranch(form.branchId);
+      return () => { mounted = false; };
+    }
+
     // Prefill branch fields from company when available and branch fields are empty
     if (form.name) {
       if (!form.branchName) handleChange("branchName", form.name);
       if (!form.branchCompanyName) handleChange("branchCompanyName", form.name);
+      if (!form.branchCode && form.code) handleChange('branchCode', form.code);
+      if (!form.branchTagline && form.tagline) handleChange('branchTagline', form.tagline);
+      if (!form.branchLogo && form.logo) handleChange('branchLogo', form.logo);
     }
     if (form.contact) {
       if (!form.branchAddress && form.contact.address) handleChange("branchAddress", form.contact.address);
       if (!form.branchPhone && form.contact.phone) handleChange("branchPhone", form.contact.phone);
       if (!form.branchEmail && form.contact.email) handleChange("branchEmail", form.contact.email);
+      if (!form.branchPhone2 && form.contact.phone2) handleChange('branchPhone2', form.contact.phone2);
     }
     if (form.gstNo && !form.branchGstn) handleChange("branchGstn", form.gstNo);
     if (form.panNo && !form.branchPan) handleChange("branchPan", form.panNo);
-    // If editing existing branch, ensure branchCode is prefilled from form.branchCode
-    if (form.branchCode && !form.branchCode) handleChange('branchCode', form.branchCode);
-  }, [form.name, form.contact, form.gstNo, form.panNo]);
+
+    return () => { mounted = false; };
+  }, [form.branchId, form.name, form.contact, form.gstNo, form.panNo]);
 
   const errors = form?.errors || {};
   const touched = form?.touched || {};

@@ -20,7 +20,7 @@ exports.createPlan = async (req, res) => {
  */
 exports.getAllPlans = async (req, res) => {
   try {
-    const { isActive, planGroup, billingCycle, search, page = 1, limit = 20 } = req.query;
+    const { isActive, planGroup, billingCycle, search, page = 1, limit = 40 } = req.query;
 
     const plans = await PlanService.getAllPlans({
       isActive: isActive !== undefined ? isActive === 'true' : true,

@@ -29,19 +29,7 @@ const addonData = [
     isDeleted: false,
     type:"limit"
   },
-  {
-    value: "max_reseller",
-    name: "Extra Reseller",
-    description: "Add additional reseller to your plan",
-    pricePaise: 50000, // ₹500
-    hasTax: true,
-    taxIncluded: true,
-    taxName: "GST",
-    isSystem: true,
-    isActive: true,
-    isDeleted: false,
-    type:"limit"
-  },
+
   {
     value: "max_customers",
     name: "Extra Customers",

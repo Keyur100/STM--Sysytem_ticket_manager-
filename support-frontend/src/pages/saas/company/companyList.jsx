@@ -1,3 +1,47 @@
+// import React, { useEffect, useState } from 'react';
+// import { Box, Button, List, ListItem, ListItemText, Typography } from '@mui/material';
+// import api from '../../../api/axios';
+// import CompanyEditModal from './CompanyEditModal';
+// import ManageClientsModal from './ManageClientsModal';
+
+// export default function CompanyList() {
+//   const [companies, setCompanies] = useState([]);
+//   const [loading, setLoading] = useState(false);
+//   const [editId, setEditId] = useState(null);
+//   const [manageId, setManageId] = useState(null);
+
+//   const fetch = async () => {
+//     setLoading(true);
+//     try {
+//       const res = await api.get('/saas/company');
+//       setCompanies(res.data.items || res.data || []);
+//     } catch (e) { console.error(e); }
+//     setLoading(false);
+//   };
+
+//   useEffect(() => { fetch(); }, []);
+
+//   return (
+//     <Box>
+//       <Typography variant="h6">Companies</Typography>
+//       <List>
+//         {companies.map(c => (
+//           <ListItem key={c._id} secondaryAction={(
+//             <>
+//               <Button size="small" onClick={() => setEditId(c._id)}>Edit</Button>
+//               <Button size="small" onClick={() => setManageId(c._id)}>Clients</Button>
+//             </>
+//           )}>
+//             <ListItemText primary={c.name || c.code} secondary={c.contact?.email || ''} />
+//           </ListItem>
+//         ))}
+//       </List>
+
+//       <CompanyEditModal open={!!editId} onClose={(saved) => { setEditId(null); if (saved) fetch(); }} companyId={editId} />
+//       <ManageClientsModal open={!!manageId} onClose={() => setManageId(null)} companyId={manageId} />
+//     </Box>
+//   );
+// }
 import React, { useState, useEffect, useCallback } from "react";
 import { Box, Paper, Button, Stack, Dialog, DialogTitle, DialogContent, DialogActions, Typography, CircularProgress, Alert, Accordion, AccordionSummary, AccordionDetails, Chip } from "@mui/material";
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
@@ -271,14 +315,14 @@ export default function CompanyList() {
           orderBy={orderBy}
           onSearchChange={debouncedSearch}
           searchPlaceHolder={"Search by name."}
-          onAdd={{ fn: () => nav("/companies/new"), perm: "company.create" }}
+          onAdd={{ fn: () => nav("/companies/new"), perm: "saas.company_create" }}
           onEdit={(r) => nav(`/companies/${r._id}/edit`)}
           onView={openDetails}
           onDelete={handleDelete}
-          editPerm="company.update"
-          deletePerm="company.delete"
-          hideEdit={true}
-          hideDelete={true}
+          editPerm="saas.company_update"
+          deletePerm="saas.company_delete"
+          hideEdit={false}
+          hideDelete={false}
           hideView={false}
           hideAdd={false}
           addLabel="Add Company"

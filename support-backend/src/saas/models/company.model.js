@@ -8,7 +8,7 @@ const CompanySchema = new Schema(
     name: { type: String },//TODO
     url: { type: String, index: true, sparse: true },
     panNo: { type: String, index: true, sparse: true },
-    gstNumber: { type: String, index: true, sparse: true },
+    gstNo: { type: String, index: true, sparse: true },
     contact: {
       personName: String,
       email: { type: String, lowercase: true, index: true, sparse: true },//TODO
@@ -31,7 +31,7 @@ const CompanySchema = new Schema(
     
     status: {
       type: String,
-      enum: ["draft", "active", "expired", "over_limit", "suspended"],
+      enum: ["draft","partially_paid", "active", "expired", "over_limit", "suspended"],
       default: "draft",
     },
     isActive: { type: Boolean, default: true, index: true },
@@ -62,13 +62,17 @@ const CompanySchema = new Schema(
     // copy of the plan (price, modulePermissions, enabled flags) and must be
     // used for billing/permission decisions instead of the canonical plan doc.
     planSnapshot: Schema.Types.Mixed,
-    // Short code (unique/optional) for the company (e.g. tenant code)
+    // Short code (unique/optional) for the company (e.g. tenantcompany code)
     code: { type: String, index: true, sparse: true },
     // Store addons selected by the company as a lightweight map
     // e.g. { "extra_users": 2, "storage_mb": 5120 }
     selectedAddons: { type: Schema.Types.Mixed, default: {} },
     // Selected branches map and metadata
     selectedBranches: { type: Schema.Types.Mixed, default: {} },
+    // Primary branch reference (useful for quick access to the main branch)
+    branchId: { type: Schema.Types.ObjectId, ref: 'Branch', index: true, sparse: true },
+    // Primary client user reference (one client user per company)
+    clientId: { type: Schema.Types.ObjectId, ref: 'ClientUser', index: true, sparse: true },
     // Effective user limits computed from plan + active addons (e.g., { max_employees: 12, storageMB: 1024 })
     effectiveUserLimits: { type: Schema.Types.Mixed, default: {} },
     // Tax settings for company-level tax config

@@ -52,7 +52,7 @@ class ModuleService {
     const modules = await Module.find(filter)
       .skip((page - 1) * limit)
       .limit(parseInt(limit))
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: 1 });
 
     return { total, page: +page, limit: +limit, modules };
   }

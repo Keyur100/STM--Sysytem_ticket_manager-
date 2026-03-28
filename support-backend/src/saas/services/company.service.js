@@ -10,7 +10,9 @@ const CouponService = require("./coupon.service");
 const orderModel = require("../models/order.model");
 const paymentModel = require("../models/payment.model");
 const walletModel = require("../models/wallet.model");
+const walletTransactionModel = require("../models/walletTransaction.model");
 const auditTrailModel = require("../models/auditTrail.model");
+const syncLogModel = require("../models/syncLog.model");
 const planModel = require("../models/plan.model");
 const subscriptionModel = require("../models/subscription.model");
 const transactionModel = require("../models/transaction.model");
@@ -52,7 +54,7 @@ async function ensureUniqueCompanyFields(payload, excludeId = null) {
   if (payload.code) checks.push({ code: payload.code });
   if (payload.url) checks.push({ url: payload.url });
   if (payload.panNo) checks.push({ panNo: payload.panNo });
-  if (payload.gstNumber) checks.push({ gstNumber: payload.gstNumber });
+  if (payload.gstNo) checks.push({ gstNo: payload.gstNo });
   if (payload.contact && payload.contact.email) checks.push({ 'contact.email': payload.contact.email.toLowerCase() });
 
   for (const q of checks) {
@@ -285,7 +287,7 @@ class CompanyService {
       name: payload?.name || "Untitled Company",
       url: payload?.url || '',
       panNo: payload?.panNo || '',
-      gstNumber: payload?.gstNo || '',
+      gstNo: payload?.gstNo || '',
       bankAccount: payload?.bankAccount || '',
       contact: payload?.contact || '',
       status: "draft",
@@ -328,9 +330,25 @@ class CompanyService {
     // Ensure uniqueness for fields if being updated
     await ensureUniqueCompanyFields(payload, companyId);
 
+    // Map frontend field names to schema field names
+    const updateData = { ...payload, updatedBy };
+    
+    // If frontend sends 'plan', map it to 'planSnapshot'
+    if (updateData.plan && !updateData.planSnapshot) {
+      updateData.planSnapshot = updateData.plan;
+      delete updateData.plan;
+    }
+    
+    // If frontend sends 'effectivePermissions', store it as well
+    if (updateData.effectivePermissions) {
+      // effectivePermissions is transient and derived from planSnapshot
+      // We can store it for quick access if needed, but it's computed from planSnapshot
+      delete updateData.effectivePermissions;
+    }
+
     const company = await Company.findByIdAndUpdate(
       companyId,
-      { $set: { ...payload, updatedBy } },
+      { $set: updateData },
       { new: true, runValidators: true }
     );
     return company;
@@ -653,6 +671,22 @@ class CompanyService {
     await order.save();
   }
 
+  /* =========================
+     UPDATE COMPANY STATUS
+  ========================= */
+  // Set company status based on order payment status
+  try {
+    let newCompanyStatus = 'draft';
+    if (orderStatus === 'paid') {
+      newCompanyStatus = 'active';
+    } else if (orderStatus === 'partially_paid') {
+      newCompanyStatus = 'partially_paid';
+    }
+    await Company.findByIdAndUpdate(companyId, { $set: { status: newCompanyStatus } }).catch(() => null);
+  } catch (e) {
+    console.error('Failed to update company status on signup:', e);
+  }
+
   return { company, order };
 }
 
@@ -683,7 +717,7 @@ class CompanyService {
     limit = 10,
     search,
     sortBy = "createdAt",
-    sortOrder = "asc",
+    sortOrder = "desc",
   }) {
     const skip = (page - 1) * Number(limit);
 
@@ -969,6 +1003,19 @@ class CompanyService {
       let subscription = null;
       if (order.status === "paid") {
         subscription = await activateSubscriptionIfEligible(order);
+      }
+
+      // 14. Update company status based on order payment status
+      try {
+        let newCompanyStatus = 'draft';
+        if (order.status === 'paid') {
+          newCompanyStatus = 'active';
+        } else if (order.status === 'partially_paid') {
+          newCompanyStatus = 'partially_paid';
+        }
+        await Company.findByIdAndUpdate(companyId, { $set: { status: newCompanyStatus } }).catch(() => null);
+      } catch (e) {
+        console.error('Failed to update company status on cash payment:', e);
       }
 
       return {
@@ -1271,6 +1318,19 @@ class CompanyService {
         order.paymentIds = order.paymentIds || [];
         order.paymentIds.push(wp._id);
         await order.save();
+      }
+
+      // Update company status based on order payment status
+      try {
+        let newCompanyStatus = 'draft';
+        if (orderStatus === 'paid') {
+          newCompanyStatus = 'active';
+        } else if (orderStatus === 'partially_paid') {
+          newCompanyStatus = 'partially_paid';
+        }
+        await Company.findByIdAndUpdate(company._id, { $set: { status: newCompanyStatus } }).catch(() => null);
+      } catch (e) {
+        console.error('Failed to update company status on upgrade:', e);
       }
 
       // // If order was NOT paid (no new active subscription), ensure company reflects
@@ -1613,6 +1673,19 @@ class CompanyService {
       }
     }
 
+    // Update company status based on order payment status
+    try {
+      let newCompanyStatus = 'draft';
+      if (order.status === 'paid') {
+        newCompanyStatus = 'active';
+      } else if (order.status === 'partially_paid') {
+        newCompanyStatus = 'partially_paid';
+      }
+      await Company.findByIdAndUpdate(companyId, { $set: { status: newCompanyStatus } }).catch(() => null);
+    } catch (e) {
+      console.error('Failed to update company status on addon purchase:', e);
+    }
+
     return { orderId: order._id, status: order.status };
   }
 
@@ -1836,6 +1909,19 @@ class CompanyService {
         order.paymentIds = order.paymentIds || [];
         order.paymentIds.push(wp._id);
         await order.save();
+      }
+
+      // Update company status based on order payment status
+      try {
+        let newCompanyStatus = 'draft';
+        if (orderStatus === 'paid') {
+          newCompanyStatus = 'active';
+        } else if (orderStatus === 'partially_paid') {
+          newCompanyStatus = 'partially_paid';
+        }
+        await Company.findByIdAndUpdate(company._id, { $set: { status: newCompanyStatus } }).catch(() => null);
+      } catch (e) {
+        console.error('Failed to update company status on reactivation:', e);
       }
 
       return {
@@ -2159,7 +2245,7 @@ class CompanyService {
             createdAt: company.createdAt,
             updatedAt: company.updatedAt,
             pan: company.panNo || null,
-            gstn: company.gstNumber || null,
+            gstn: company.gstNo || null,
           },
           branches: branches || [],
           clientUsers: clientUsers || [],
@@ -2309,7 +2395,9 @@ class CompanyService {
         modules.forEach((m) => {
           if (Array.isArray(m.actions)) {
             m.actions.forEach((a) => {
-              if (a && a.key) modulePermissions.push(a.key.replace(/^saas\./, ''))
+              if (a && a.key && a.enabled === true) {
+                modulePermissions.push(a.key.replace(/^saas\./, ''))
+              }
             });
           }
         });
@@ -2371,21 +2459,24 @@ module.exports = CompanyService;
 /** Soft-delete and restore utilities */
 CompanyService.softDeleteCompany = async function(companyId, deletedBy) {
   const now = Date.now();
-  const cid = mongoose.Types.ObjectId(companyId);
+  const cid = new mongoose.Types.ObjectId(companyId);
 
-  const company = await Company.findByIdAndUpdate(companyId, { isDeleted: true, deletedAt: now, deletedBy }, { new: true });
+  const company = await Company.findByIdAndDelete(companyId, { isDeleted: true, deletedAt: now, deletedBy }, { new: true });
   if (!company) throw new Error('Company not found');
 
   // Cascade soft-delete to related models
   await Promise.all([
-    subscriptionModel.updateMany({ companyId: cid }, { isDeleted: true, deletedAt: now }),
-    orderModel.updateMany({ companyId: cid }, { isDeleted: true, deletedAt: now }),
-    transactionModel.updateMany({ companyId: cid }, { isDeleted: true, deletedAt: now }),
-    walletModel.updateMany({ companyId: cid }, { isDeleted: true, deletedAt: now }),
-    auditTrailModel.updateMany({ companyId: cid }, { isDeleted: true, deletedAt: now }),
-    branchModel.updateMany({ companyId: cid }, { isDeleted: true, deletedAt: now }),
-    clientUserModel.updateMany({ companyId: cid }, { isDeleted: true, deletedAt: now }),
-  ]);
+  subscriptionModel.deleteMany({ companyId: cid }),
+  orderModel.deleteMany({ companyId: cid }),
+  transactionModel.deleteMany({ companyId: cid }),
+  walletModel.deleteMany({ companyId: cid }),
+  walletTransactionModel.deleteMany({ companyId: cid }),
+  paymentModel.deleteMany({ company: cid }),
+  auditTrailModel.deleteMany({ companyId: cid }),
+  branchModel.deleteMany({ companyId: cid }),
+  clientUserModel.deleteMany({ companyId: cid }),
+  syncLogModel.deleteMany({ companyId: cid }),
+]);
 
   // Notify third-party callback if configured
   try {
@@ -2403,6 +2494,23 @@ CompanyService.softDeleteCompany = async function(companyId, deletedBy) {
   }
 
   return { success: true, companyId, deletedAt: now };
+};
+
+CompanyService.deleteAllCompanyData = async function() {
+  await Promise.all([
+    Company.deleteMany({}),
+    orderModel.deleteMany({}),
+    subscriptionModel.deleteMany({}),
+    walletModel.deleteMany({}),
+    walletTransactionModel.deleteMany({}),
+    paymentModel.deleteMany({}),
+    auditTrailModel.deleteMany({}),
+    branchModel.deleteMany({}),
+    clientUserModel.deleteMany({}),
+    syncLogModel.deleteMany({}),
+    transactionModel.deleteMany({}),
+  ]);
+  return { success: true };
 };
 
 CompanyService.listDeletedCompanies = async function({ page = 1, limit = 20 } = {}) {
@@ -2424,9 +2532,12 @@ CompanyService.restoreCompany = async function(companyId, restoredBy) {
     orderModel.updateMany({ companyId: cid }, { isDeleted: false, deletedAt: null }),
     transactionModel.updateMany({ companyId: cid }, { isDeleted: false, deletedAt: null }),
     walletModel.updateMany({ companyId: cid }, { isDeleted: false, deletedAt: null }),
+    walletTransactionModel.updateMany({ companyId: cid }, { isDeleted: false, deletedAt: null }),
+    paymentModel.updateMany({ companyId: cid }, { isDeleted: false, deletedAt: null }),
     auditTrailModel.updateMany({ companyId: cid }, { isDeleted: false, deletedAt: null }),
     branchModel.updateMany({ companyId: cid }, { isDeleted: false, deletedAt: null }),
     clientUserModel.updateMany({ companyId: cid }, { isDeleted: false, deletedAt: null }),
+    syncLogModel.updateMany({ companyId: cid }, { isDeleted: false, deletedAt: null }),
   ]);
 
   return company;

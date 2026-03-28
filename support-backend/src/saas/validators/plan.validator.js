@@ -15,7 +15,6 @@ exports.create = Joi.object({
     max_branch: Joi.number().default(0),
     max_customers: Joi.number().default(0),
     max_suppliers: Joi.number().default(0),
-    max_reseller: Joi.number().default(0),
     storageMB: Joi.number().default(150 * 1024)
   }),
 

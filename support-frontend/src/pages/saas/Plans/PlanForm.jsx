@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import * as RW from 'react-window';
 import { Box, Paper, Button, TextField, Grid, FormControl, InputLabel, Select, MenuItem, Switch, FormControlLabel, CircularProgress, Alert, Accordion, AccordionSummary, AccordionDetails, Checkbox, Typography } from '@mui/material';
 import RequiredTextField from '../../../components/form/RequiredTextField';
 import { useFormik } from 'formik';
@@ -10,7 +11,10 @@ import usePermissions from '../../../helpers/hooks/usePermissions';
 const schema = yup.object({
   code: yup.string().required('Code is required'),
   name: yup.string().required('Name is required'),
-  billingCycle: yup.string().required('Billing cycle required'),
+  durationDays: yup.number()
+    .transform((value, originalValue) => originalValue === '' ? null : value)
+    .nullable()
+    .min(0, 'Duration must be non-negative'),
   price: yup.number().min(0),
 });
 
@@ -25,6 +29,7 @@ export default function PlanForm() {
   const [planPayload, setPlanPayload] = useState(null);
   const [moduleSearch, setModuleSearch] = useState("");
   const [filteredModuleKeys, setFilteredModuleKeys] = useState(null);
+  const FixedSizeList = RW?.FixedSizeList || RW?.default?.FixedSizeList || null;
 
   const form = useFormik({
     initialValues: {
@@ -45,13 +50,15 @@ export default function PlanForm() {
     onSubmit: async (values) => {
       try {
         setError(null);
-        // convert internal `enabled` -> API `visible` before submit
-        const modulePermissionsForApi = (values.modulePermissions || []).map((m) => ({
-          moduleKey: m.moduleKey,
-          displayName: m.displayName,
-          visible: typeof m.visible !== 'undefined' ? !!m.visible : (m.actions || []).some((a) => !!a.enabled),
-          actions: (m.actions || []).map((a) => ({ key: a.key, visible: !!a.enabled })),
-        }));
+        // preserve module permission metadata for API submit
+        const modulePermissionsForApi = (values.modulePermissions || []).map((m) => {
+          const actions = (m.actions || []).map((a) => ({ ...a, enabled: !!a.enabled }));
+          return {
+            ...m,
+            visible: typeof m.visible !== 'undefined' ? !!m.visible : actions.some((a) => !!a.enabled),
+            actions,
+          };
+        });
 
         const payload = { ...values, pricePaise: Math.round((values.price || 0) * 100), modulePermissions: modulePermissionsForApi };
         if (isNew) await api.post('/saas/plan', payload);
@@ -101,9 +108,45 @@ export default function PlanForm() {
         setLoading(false);
       }).catch(() => { setError('Failed to load plan'); setLoading(false); });
     }
-  }, [id]);
+  }, [id, isNew]);
 
   // when modules are loaded, initialize modulePermissions for create or merge for edit
+  const filteredModules = useMemo(() => {
+    const modulePermissions = form.values.modulePermissions || [];
+    if (filteredModuleKeys && filteredModuleKeys.length) {
+      return modulePermissions.filter((m) => filteredModuleKeys.includes(m.moduleKey));
+    }
+    return modulePermissions;
+  }, [form.values.modulePermissions, filteredModuleKeys]);
+
+  const toggleModuleAction = useCallback(
+    (moduleKey, actionKey) => {
+      const current = form.values.modulePermissions || [];
+      const next = current.map((mod) => {
+        if (mod.moduleKey !== moduleKey) return mod;
+        const actions = (mod.actions || []).map((a) =>
+          a.key === actionKey ? { ...a, enabled: !a.enabled } : a
+        );
+        return { ...mod, actions };
+      });
+      form.setFieldValue('modulePermissions', next);
+    },
+    [form]
+  );
+
+  const toggleAllModuleActions = useCallback(
+    (moduleKey) => {
+      const current = form.values.modulePermissions || [];
+      const next = current.map((mod) => {
+        if (mod.moduleKey !== moduleKey) return mod;
+        const allEnabled = (mod.actions || []).every((a) => !!a.enabled);
+        return { ...mod, actions: (mod.actions || []).map((a) => ({ ...a, enabled: !allEnabled })) };
+      });
+      form.setFieldValue('modulePermissions', next);
+    },
+    [form]
+  );
+
   useEffect(() => {
     if (!modules || !modules.length) return;
     // build default permissions from modules (UI uses `enabled` internally)
@@ -111,7 +154,7 @@ export default function PlanForm() {
       moduleKey: m.moduleKey,
       displayName: m.displayName || m.moduleKey,
       visible: true,
-      actions: (m.actions || []).map((a) => ({ key: a.key, displayName: a.displayName || a.key, enabled: true })),
+      actions: (m.actions || []).map((a) => ({ key: a.key, label: a.label, displayName: a.displayName || a.label || a.key, enabled: true })),
     }));
 
     if (isNew) {
@@ -129,14 +172,14 @@ export default function PlanForm() {
           const ex = existing && (existing.actions || []).find((x) => x.key === a.key);
           // preserve existing enabled OR visible flag; for newly added actions default to false
           const enabled = typeof (ex && ex.enabled) !== 'undefined' ? !!ex.enabled : (typeof (ex && ex.visible) !== 'undefined' ? !!ex.visible : false);
-          return { key: a.key, displayName: a.displayName || a.key, enabled };
+          return { ...a, displayName: a.displayName || a.label || a.key, enabled };
         });
         const modVisible = typeof existing?.visible !== 'undefined' ? !!existing.visible : actions.some((aa) => aa.enabled);
-        return { moduleKey: m.moduleKey, displayName: m.displayName || m.moduleKey, visible: modVisible, actions };
+        return { ...m, displayName: m.displayName || m.moduleKey, visible: modVisible, actions };
       });
       form.setFieldValue('modulePermissions', merged);
     }
-  }, [modules, planPayload]);
+  }, [modules, planPayload, isNew]);
 
   // debounce moduleSearch and use backend search to determine which modules to show
   useEffect(() => {
@@ -177,17 +220,7 @@ export default function PlanForm() {
             </Grid>
 
             <Grid item xs={12} sm={6}>
-              <FormControl fullWidth>
-                <InputLabel>Billing Cycle</InputLabel>
-                <Select name="billingCycle" value={form.values.billingCycle} onChange={form.handleChange} label="Billing Cycle">
-                  <MenuItem value="ONETIME">One-time</MenuItem>
-                  <MenuItem value="DAILY">Daily</MenuItem>
-                  <MenuItem value="WEEKLY">Weekly</MenuItem>
-                  <MenuItem value="MONTHLY">Monthly</MenuItem>
-                  <MenuItem value="HALF_YEARLY">Half-yearly</MenuItem>
-                  <MenuItem value="YEARLY">Yearly</MenuItem>
-                </Select>
-              </FormControl>
+              <RequiredTextField name="durationDays" label="Duration (Days)" type="number" formik={form} />
             </Grid>
 
             <Grid item xs={12} sm={6}>
@@ -208,54 +241,38 @@ export default function PlanForm() {
             <Grid item xs={12}>
               <Typography variant="h6">Module Permissions</Typography>
               <TextField fullWidth placeholder="Search modules..." value={moduleSearch} onChange={(e) => setModuleSearch(e.target.value)} sx={{ mt: 1, mb: 1 }} />
-              {(!form.values.modulePermissions || form.values.modulePermissions.length === 0) ? (
+              {(!filteredModules || filteredModules.length === 0) ? (
                 <Typography variant="body2" color="text.secondary">No modules available</Typography>
-              ) : (
-                // If backend search is active use its results, otherwise show all modulePermissions
-                (filteredModuleKeys && filteredModuleKeys.length
-                  ? form.values.modulePermissions.filter((m) => filteredModuleKeys.includes(m.moduleKey))
-                  : form.values.modulePermissions)
-                  .map((m, idx) => {
-                    const actions = m.actions || [];
-                    const totalCount = actions.length;
-                    const enabledCount = actions.filter((a) => !!a.enabled).length;
-                    const isAllSelected = totalCount > 0 && enabledCount === totalCount;
-                    const handleToggleAll = (e) => {
-                      const setTo = e.target.checked;
-                      const updated = JSON.parse(JSON.stringify(form.values.modulePermissions || []));
-                      if (updated[idx] && Array.isArray(updated[idx].actions)) {
-                        updated[idx].actions = updated[idx].actions.map((a) => ({ ...a, enabled: setTo }));
-                        form.setFieldValue('modulePermissions', updated);
-                      }
-                    };
-
+              ) : FixedSizeList ? (
+                <FixedSizeList
+                  height={Math.min(600, filteredModules.length * 120)}
+                  itemCount={filteredModules.length}
+                  itemSize={120}
+                  width="100%"
+                  itemData={filteredModules}
+                >
+                  {({ index, style, data }) => {
+                    const m = data[index];
                     return (
-                      <Accordion key={m.moduleKey} sx={{ mt: 1 }}>
-                        <AccordionSummary expandIcon={<span>▾</span>}>
-                          <FormControlLabel
-                            control={<Checkbox checked={isAllSelected} indeterminate={!isAllSelected && enabledCount > 0} onChange={handleToggleAll} />}
-                            label={<Typography sx={{ fontWeight: 600 }}>{m.displayName}</Typography>}
-                            onClick={(e) => e.stopPropagation()}
-                          />
-                        </AccordionSummary>
-                        <AccordionDetails>
-                          <Box sx={{ pl: 1 }}>
-                            {(m.actions || []).map((a, i) => (
-                            <FormControlLabel
-                              key={a.key}
-                              control={<Checkbox checked={!!a.enabled} onChange={(e) => {
-                                const updated = JSON.parse(JSON.stringify(form.values.modulePermissions || []));
-                                updated[idx].actions[i].enabled = e.target.checked;
-                                form.setFieldValue('modulePermissions', updated);
-                              }} />}
-                              label={a.displayName || a.key}
-                            />
-                            ))}
-                          </Box>
-                        </AccordionDetails>
-                      </Accordion>
+                      <div style={style} key={m.moduleKey}>
+                        <ModulePermissionCard
+                          mod={m}
+                          togglePermission={toggleModuleAction}
+                          toggleAll={toggleAllModuleActions}
+                        />
+                      </div>
                     );
-                  })
+                  }}
+                </FixedSizeList>
+              ) : (
+                filteredModules.map((m) => (
+                  <ModulePermissionCard
+                    key={m.moduleKey}
+                    mod={m}
+                    togglePermission={toggleModuleAction}
+                    toggleAll={toggleAllModuleActions}
+                  />
+                ))
               )}
             </Grid>
           </Grid>
@@ -264,3 +281,44 @@ export default function PlanForm() {
     </Box>
   );
 }
+
+const ModulePermissionCard = React.memo(({ mod, togglePermission, toggleAll }) => {
+  const actionsState = mod.actions || [];
+  const totalCount = actionsState.length;
+  const enabledCount = actionsState.filter((a) => !!a.enabled).length;
+  const isAllSelected = totalCount > 0 && enabledCount === totalCount;
+
+  return (
+    <Accordion sx={{ mt: 1 }}>
+      <AccordionSummary expandIcon={<span>▾</span>}>
+        <FormControlLabel
+          control={
+            <Checkbox
+              checked={isAllSelected}
+              indeterminate={!isAllSelected && enabledCount > 0}
+              onChange={() => toggleAll(mod.moduleKey)}
+            />
+          }
+          label={<Typography sx={{ fontWeight: 600 }}>{mod.displayName || mod.moduleKey}</Typography>}
+          onClick={(e) => e.stopPropagation()}
+        />
+      </AccordionSummary>
+      <AccordionDetails>
+        <Box sx={{ pl: 1 }}>
+          {(mod.actions || []).map((action) => (
+            <FormControlLabel
+              key={action.key}
+              control={
+                <Checkbox
+                  checked={!!action.enabled}
+                  onChange={() => togglePermission(mod.moduleKey, action.key)}
+                />
+              }
+              label={action.displayName || action.key}
+            />
+          ))}
+        </Box>
+      </AccordionDetails>
+    </Accordion>
+  );
+});

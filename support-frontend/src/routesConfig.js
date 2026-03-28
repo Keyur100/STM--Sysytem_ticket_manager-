@@ -7,6 +7,7 @@ import CategoryIcon from "@mui/icons-material/Category";
 import LabelIcon from "@mui/icons-material/Label";
 import SummarizeIcon from "@mui/icons-material/Summarize";
 import WorkIcon from "@mui/icons-material/Work";
+import DeleteIcon from "@mui/icons-material/Delete";
 import  Business  from "@mui/icons-material/Business";
 import LocalOfferIcon from "@mui/icons-material/LocalOffer";
 import ExtensionIcon from "@mui/icons-material/Extension";
@@ -141,6 +142,13 @@ const routesConfig = [
   //   component: React.lazy(() => import("./pages/audit/AuditList")),
   //   permission: "audit.read",
   // },
+  {
+    label: "Delete All Data",
+    icon: DeleteIcon,   
+    path: "/delete-all",
+    permission: "saas.delete_all",
+    component: React.lazy(() => import("./pages/saas/company/CompanyDeleteAll")),
+  },
    {
     label: "Companies",
     icon: Business,
@@ -169,6 +177,13 @@ const routesConfig = [
         permission: "saas.company_read",
       },
     ],
+  },
+  {
+    label: "Client Users",
+    icon: PeopleIcon,
+    path: "/client-users",
+    permission: "saas.company_read",
+    component: React.lazy(() => import("./pages/saas/clientUsers/ClientUserList")),
   },
   {
     label: "Branches",

@@ -6,6 +6,7 @@ const SyncLogSchema = new Schema({
   step: { type: String, required: true },
   status: { type: String, enum: ['success', 'failed'], required: true },
   message: String,
+  type: { type: String, enum: ['trial', 'actual'], default: 'trial' },
   remoteResponse: Schema.Types.Mixed,
 }, { timestamps: true });
 

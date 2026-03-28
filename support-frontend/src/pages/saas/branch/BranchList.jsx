@@ -142,6 +142,8 @@ export default function BranchList() {
             onDelete={(r) => handleDelete(r._id)}
             hideAdd={true}
             hideDelete={true}
+        hideEdit={true}
+
           />
         </Box>
 

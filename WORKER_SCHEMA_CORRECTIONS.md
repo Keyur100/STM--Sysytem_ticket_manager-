@@ -13,7 +13,7 @@ All worker files have been updated to work with your actual database schema. No 
   name: String,
   url: String,
   panNo: String,
-  gstNumber: String,
+  gstNo: String,
   contact: {
     personName: String,
     email: String,
