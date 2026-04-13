@@ -108,7 +108,18 @@ function calculateSubscriptionExpiry(plan, startAt) {
   return d.getTime();
 }
 
- 
+function companyUsesTrial(company) {
+  if (!company) return false;
+  const planName = String(company.planSnapshot?.name || '').toLowerCase();
+  return company.isTrialUsed === true  || planName.includes('trial');
+}
+
+function planIsTrial(plan) {
+  if (!plan) return false;
+  const planName = String(plan.name || '').toLowerCase();
+  return  planName.includes('trial');
+}
+
 async function activateSubscriptionIfEligible(order) {
   if (order.status !== "paid") return null;
   if (order.subscriptionId) return null;
@@ -125,6 +136,12 @@ async function activateSubscriptionIfEligible(order) {
     plan = await planModel.findById(planItem.itemId);
   }
   if (!plan) throw new Error("Plan not found for paid order");
+  if (!plan._id && plan.planId) {
+    plan._id = plan.planId;
+  }
+  if (!plan._id && planItem.itemId) {
+    plan._id = planItem.itemId;
+  }
 
   // Take intended start from order (for renewal/reactivation), else now
   const startAt = order.meta?.intendedStartAt || now;
@@ -193,43 +210,92 @@ async function activateSubscriptionIfEligible(order) {
     : carriedAddons;
 
   /* =========================
-     CREATE NEW SUBSCRIPTION
+     CHECK FOR EXISTING EXPIRED SUBSCRIPTION TO REACTIVATE
   ========================= */
-  const [subscription] = await subscriptionModel.create(
-    [
+  let existingExpiredSubscription = null;
+  if (order.orderType === "SUBSCRIPTION_PURCHASE") {
+    // For trial-to-actual conversion, check if there's an EXPIRED subscription to reactivate
+    existingExpiredSubscription = await subscriptionModel.findOne({
+      companyId: order.companyId,
+      status: 'EXPIRED'
+    }).sort({ createdAt: -1 }); // Get the most recent expired subscription
+  }
+
+  let subscription;
+  if (existingExpiredSubscription) {
+    /* =========================
+       REACTIVATE EXISTING EXPIRED SUBSCRIPTION
+    ========================= */
+    // Update the existing subscription to ACTIVE with new plan details
+    subscription = await subscriptionModel.findByIdAndUpdate(
+      existingExpiredSubscription._id,
       {
-        companyId: order.companyId,
-        planId: plan._id,
+        $set: {
+          planId: planIdForSubscription,
+          planSnapshot: {
+            planId: planIdForSubscription,
+            code: plan.code,
+            name: plan.name,
+            billingCycle: plan.billingCycle,
+            durationDays: plan.durationDays,
+            pricePaise: plan.pricePaise,
+            userPricing: plan.userPricing,
+            modulePermissions: plan.modulePermissions
+          },
+          addonSnapshot: finalAddons,
+          planPricePaise: planItem.priceAtPurchasePaise,
+          addonPricePaise: finalAddons.reduce((s, a) => s + a.pricePaise * a.qty, 0),
+          totalContractValuePaise: order.totals.totalPayablePaise,
+          startAt,
+          endAt: expiryDate,
+          status: "ACTIVE",
+          activatedByOrderId: order._id,
+          updatedAt: now
+        }
+      },
+      { new: true }
+    );
+  } else {
+    /* =========================
+       CREATE NEW SUBSCRIPTION
+    ========================= */
+    const planIdForSubscription = plan._id || plan.planId || planItem.itemId;
+    [subscription] = await subscriptionModel.create(
+      [
+        {
+          companyId: order.companyId,
+          planId: planIdForSubscription,
 
-        planSnapshot: {
-          planId: plan._id,
-          code: plan.code,
-          name: plan.name,
-          billingCycle: plan.billingCycle,
-          durationDays: plan.durationDays,
-          pricePaise: plan.pricePaise,
-          userPricing: plan.userPricing,
-          modulePermissions: plan.modulePermissions
-        },
+          planSnapshot: {
+            planId: planIdForSubscription,
+            code: plan.code,
+            name: plan.name,
+            billingCycle: plan.billingCycle,
+            durationDays: plan.durationDays,
+            pricePaise: plan.pricePaise,
+            userPricing: plan.userPricing,
+            modulePermissions: plan.modulePermissions
+          },
 
-        addonSnapshot: finalAddons,
+          addonSnapshot: finalAddons,
 
-        planPricePaise: planItem.priceAtPurchasePaise,
+          planPricePaise: planItem.priceAtPurchasePaise,
 
-        addonPricePaise: finalAddons.reduce(
-          (s, a) => s + a.pricePaise * a.qty,
-          0
-        ),
+          addonPricePaise: finalAddons.reduce(
+            (s, a) => s + a.pricePaise * a.qty,
+            0
+          ),
 
-        totalContractValuePaise: order.totals.totalPayablePaise,
+          totalContractValuePaise: order.totals.totalPayablePaise,
 
-        startAt,
-        endAt: expiryDate,
-        status: "ACTIVE",
-        activatedByOrderId: order._id
-      }
-    ]
-  );
+          startAt,
+          endAt: expiryDate,
+          status: "ACTIVE",
+          activatedByOrderId: order._id
+        }
+      ]
+    );
+  }
 
   // Link order → subscription
   await orderModel.updateOne(
@@ -295,6 +361,7 @@ class CompanyService {
       updatedBy: createdBy,
       activeSubscriptionId: null,
       planSnapshot: payload?.plan || null,
+      isTrialUsed: payload?.isTrialUsed === true || planIsTrial(payload?.plan || payload?.planSnapshot),
       code: payload?.code || (payload?.name ? String(payload.name).replace(/\s+/g, '').toUpperCase() : null),
       selectedAddons: payload?.selectedAddons || {},
       settings: payload?.settings || {},
@@ -337,6 +404,10 @@ class CompanyService {
     if (updateData.plan && !updateData.planSnapshot) {
       updateData.planSnapshot = updateData.plan;
       delete updateData.plan;
+    }
+
+    if (updateData.planSnapshot) {
+      updateData.isTrialUsed = planIsTrial(updateData.planSnapshot);
     }
     
     // If frontend sends 'effectivePermissions', store it as well
@@ -388,9 +459,13 @@ class CompanyService {
   const items = [];
   const planPricePaise = Number(planDoc.pricePaise || planDoc.planPricePaise || 0);
 
+  const planIdForOrder = planDoc._id || planDoc.planId || planData?._id || planData?.planId || null;
+  if (!planIdForOrder) {
+    throw new Error("Plan identifier missing for order creation");
+  }
   items.push({
     type: "plan",
-    itemId: planDoc._id || planData._id || null,
+    itemId: planIdForOrder,
     name: planDoc.name || planDoc.planSnapshot?.name || '',
     qty: 1,
     priceAtPurchasePaise: planPricePaise,
@@ -436,7 +511,10 @@ class CompanyService {
 
   // Persist plan snapshot to company so future operations use this company-specific snapshot
   try {
-    const snapshotToStore = planDoc && typeof planDoc.toObject === 'function' ? planDoc.toObject() : planDoc;
+    const snapshotToStore = planDoc && typeof planDoc.toObject === 'function' ? planDoc.toObject() : { ...planDoc };
+    if (!snapshotToStore._id && (planDoc.planId || planData?._id || planData?.planId)) {
+      snapshotToStore._id = planDoc._id || planDoc.planId || planData._id || planData?.planId;
+    }
     company.planSnapshot = snapshotToStore;
     // Persist selectedAddons in a compact map by addon.value => qty
     try {
@@ -454,8 +532,13 @@ class CompanyService {
 
     // If payload provided a company code, persist it as well
     if (payload && payload.code) company.code = payload.code;
-
-    await company.save();
+    if (companyUsesTrial(company) && !planIsTrial(planDoc)) {
+      company.isActualPlanUsed = true;
+    }
+    if (!planIsTrial(planDoc)) {
+      company.isTrialUsed = false;
+    }
+    // NOTE: Do NOT save here - consolidate all company updates at the end
   } catch (err) {
     console.error('Failed to persist planSnapshot on company:', err);
   }
@@ -591,9 +674,24 @@ class CompanyService {
   /* =========================
      CREATE ORDER (SOURCE OF TRUTH)
   ========================= */
+  let orderType = "SUBSCRIPTION_PURCHASE";
+  let upgradeFromSubscriptionId = null;
+  const wasTrialCompany = companyUsesTrial(company);
+  const selectedPlanIsActual = !planIsTrial(planDoc);
+  if (wasTrialCompany && selectedPlanIsActual && company.activeSubscriptionId) {
+    // For trial-to-actual conversion, mark old trial subscription as EXPIRED instead of deleting
+    await subscriptionModel.findByIdAndUpdate(company.activeSubscriptionId, {
+      $set: { status: 'EXPIRED', endAt: Date.now() - 1 }
+    });
+    // Do NOT save here - consolidate with other company updates at the end
+    company.activeSubscriptionId = null;
+    // Keep orderType as SUBSCRIPTION_PURCHASE for new subscription
+  }
+
   const order = await orderModel.create({
     companyId,
-    orderType: "SUBSCRIPTION_PURCHASE",
+    orderType,
+    upgradeFromSubscriptionId,
     items,
     discounts,
     walletUsed: {
@@ -613,6 +711,9 @@ class CompanyService {
       totalDiscountPaise,
       taxableAmountPaise: remainingExcludedBase,
       totalTaxPaise: totalTaxPaiseForDisplay,
+      // includedTaxPaise: taxFromIncludedPaise,
+      // excludedTaxPaise: taxOnExcludedPaise,
+      planCreditPaise: 0, // No credit for new purchases
       totalPayablePaise
     },
     final: {
@@ -672,19 +773,33 @@ class CompanyService {
   }
 
   /* =========================
-     UPDATE COMPANY STATUS
+     CONSOLIDATE & UPDATE COMPANY (SINGLE SAVE)
   ========================= */
-  // Set company status based on order payment status
+  // Update company with all changes in one place
   try {
-    let newCompanyStatus = 'draft';
+    let newCompanyStatus = 'pending_payment';
     if (orderStatus === 'paid') {
       newCompanyStatus = 'active';
     } else if (orderStatus === 'partially_paid') {
       newCompanyStatus = 'partially_paid';
     }
-    await Company.findByIdAndUpdate(companyId, { $set: { status: newCompanyStatus } }).catch(() => null);
+    
+    // Merge all company updates
+    const companyUpdates = {
+      status: newCompanyStatus,
+      planSnapshot: company.planSnapshot,
+      selectedAddons: company.selectedAddons,
+      code: company.code,
+      isActualPlanUsed: company.isActualPlanUsed,
+      isTrialUsed: company.isTrialUsed,
+      activeSubscriptionId: company.activeSubscriptionId,
+      updatedBy: userId
+    };
+    
+    // Perform single update
+    await Company.findByIdAndUpdate(companyId, { $set: companyUpdates }, { new: true }).catch(() => null);
   } catch (e) {
-    console.error('Failed to update company status on signup:', e);
+    console.error('Failed to update company on signup:', e);
   }
 
   return { company, order };
@@ -1007,7 +1122,7 @@ class CompanyService {
 
       // 14. Update company status based on order payment status
       try {
-        let newCompanyStatus = 'draft';
+        let newCompanyStatus = 'pending_payment';
         if (order.status === 'paid') {
           newCompanyStatus = 'active';
         } else if (order.status === 'partially_paid') {
@@ -1046,7 +1161,7 @@ class CompanyService {
 
       // Validate plans
       const oldPlan = subscription.planSnapshot && Object.keys(subscription.planSnapshot || {}).length ? subscription.planSnapshot : (await loadCompanyPlanSnapshot(subscription.companyId)) || await planModel.findById(subscription.planId);
-      const newPlan = await planModel.findById(newPlanId);
+      const newPlan = newPlanId//await planModel.findById(newPlanId);
 
       if (!newPlan) throw new Error("New plan not found");
       if ((newPlan.pricePaise || 0) <= (oldPlan.pricePaise || 0)) {
@@ -1208,6 +1323,9 @@ class CompanyService {
           totalDiscountPaise: totalDiscount,
           taxableAmountPaise: taxableAmount,
           totalTaxPaise: totalTax,
+          // includedTaxPaise: taxFromIncluded,
+          // excludedTaxPaise: Math.round(taxableAmount * (taxPercent / 100)),
+          planCreditPaise: remainingValue,
           totalPayablePaise: totalPayable,
         },
         final: {
@@ -1320,9 +1438,17 @@ class CompanyService {
         await order.save();
       }
 
+      // Update company planSnapshot to new plan
+      try {
+        const snapshotToStore = newPlan && typeof newPlan.toObject === 'function' ? newPlan.toObject() : { ...newPlan };
+        await Company.findByIdAndUpdate(company._id, { $set: { planSnapshot: snapshotToStore } });
+      } catch (e) {
+        console.error('Failed to update company planSnapshot on upgrade:', e);
+      }
+
       // Update company status based on order payment status
       try {
-        let newCompanyStatus = 'draft';
+        let newCompanyStatus = 'pending_payment';
         if (orderStatus === 'paid') {
           newCompanyStatus = 'active';
         } else if (orderStatus === 'partially_paid') {
@@ -1369,6 +1495,50 @@ class CompanyService {
       };
     } catch (err) {
       console.error("Error upgrading subscription:", err);
+      throw err;
+    }
+  }
+
+  // ========================= CALCULATE UPGRADE PRORATION =========================
+  static async calculateUpgradeProration({ subscriptionId, newPlanId }) {
+    try {
+      const now = Date.now();
+
+      // Validate subscription
+      const subscription = await subscriptionModel.findById(subscriptionId);
+      if (!subscription) throw new Error("Subscription not found");
+      if (subscription.status !== "ACTIVE") throw new Error("Only ACTIVE subscriptions can be upgraded");
+
+      // Validate plans
+      const oldPlan = subscription.planSnapshot && Object.keys(subscription.planSnapshot || {}).length
+        ? subscription.planSnapshot
+        : (await loadCompanyPlanSnapshot(subscription.companyId)) || await planModel.findById(subscription.planId);
+      const newPlan = await planModel.findById(newPlanId);
+
+      if (!newPlan) throw new Error("New plan not found");
+      if ((newPlan.pricePaise || 0) <= (oldPlan.pricePaise || 0)) {
+        throw new Error("Upgrade must be to a higher-priced plan");
+      }
+
+      // Calculate proration
+      const totalDays = Math.max(1, Math.ceil((subscription.endAt - subscription.startAt) / DAY_MS));
+      const remainingDays = Math.max(0, Math.ceil((subscription.endAt - now) / DAY_MS));
+
+      let paidAmount = subscription.planPricePaise || 0;
+      if (subscription.activatedByOrderId) {
+        const order = await orderModel.findById(subscription.activatedByOrderId);
+        if (order?.final?.totalPaidPaise) paidAmount = order.final.totalPaidPaise;
+      }
+
+      const remainingValue = Math.round((paidAmount / totalDays) * remainingDays);
+      const subtotal = newPlan.pricePaise;
+
+      return {
+        remainingValuePaise: remainingValue,
+        subtotalPaise: subtotal,
+      };
+    } catch (err) {
+      console.error("Error calculating upgrade proration:", err);
       throw err;
     }
   }
@@ -1675,7 +1845,7 @@ class CompanyService {
 
     // Update company status based on order payment status
     try {
-      let newCompanyStatus = 'draft';
+      let newCompanyStatus = 'pending_payment';
       if (order.status === 'paid') {
         newCompanyStatus = 'active';
       } else if (order.status === 'partially_paid') {
@@ -1913,7 +2083,7 @@ class CompanyService {
 
       // Update company status based on order payment status
       try {
-        let newCompanyStatus = 'draft';
+        let newCompanyStatus = 'pending_payment';
         if (orderStatus === 'paid') {
           newCompanyStatus = 'active';
         } else if (orderStatus === 'partially_paid') {
@@ -2198,6 +2368,7 @@ class CompanyService {
           status: company.status,
           createdAt: company.createdAt,
           updatedAt: company.updatedAt,
+          isTrialUsed : company.isTrialUsed || false,
         },
         plan: planData,
         wallet: wallet ? {
@@ -2272,11 +2443,9 @@ class CompanyService {
           if (subscription) {
             planData = {
               subscriptionId: subscription._id,
-              planSnapshot: subscription.planSnapshot || {},
+              planSnapshot: {...subscription.planSnapshot,validity_start : formatDate(subscription.startAt), validity_end: formatDate(subscription.endAt)} || {},
               planPricePaise: subscription.planPricePaise,
               status: subscription.status,
-              validity_start : formatDate(subscription.startAt),
-              endAt: formatDate(subscription.endAt),
               addonSnapshot: subscription.addonSnapshot || [],
             };
           }
@@ -2542,3 +2711,5 @@ CompanyService.restoreCompany = async function(companyId, restoredBy) {
 
   return company;
 };
+// name belongs to trial plan then showing trial sync & isTroialUsed true else false, when actual plan buy  just upgrade 
+//downgrade timw hide trial if actual plan started then

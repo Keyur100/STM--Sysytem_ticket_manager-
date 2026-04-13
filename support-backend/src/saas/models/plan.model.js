@@ -15,7 +15,7 @@ const PlanSchema = new Schema({
   code: { type: String, required: true, unique: true, index: true },
   name: { type: String, required: true},
   description: String,
-  billingCycle: { type: String, enum: ["ONETIME", "DAILY","TRIAL", "WEEKLY", "MONTHLY", "HALF_YEARLY","YEARLY"], default: "MONTHLY" },
+  // billingCycle: { type: String, enum: ["ONETIME", "DAILY","TRIAL", "WEEKLY", "MONTHLY", "HALF_YEARLY","YEARLY"], default: "MONTHLY" },
   durationDays: { type: Number, default: null },  
   pricePaise: { type: Number, default: 0 },// similiar to planPricePaise of company 
   hasTax: { type: Boolean, default: true },// apply tax if true

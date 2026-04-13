@@ -24,7 +24,7 @@ import api from "../../../../api/axios";
 import Loader from "../../../../components/common/Loader";
 import CouponModal from "./CouponModal";
 import RequiredTextField from '../../../../components/form/RequiredTextField';
-export default function CompanyPaymentStep({ form, onPaymentReady }) {
+export default function CompanyPaymentStep({ form, subscription, onPaymentReady }) {
   const theme = useTheme();
   const [walletBalance, setWalletBalance] = useState(0);
   const [couponCode, setCouponCode] = useState("");
@@ -39,6 +39,7 @@ export default function CompanyPaymentStep({ form, onPaymentReady }) {
   const [walletDialogMode, setWalletDialogMode] = useState("add");
   const [walletAmount, setWalletAmount] = useState("");
   const [snackbar, setSnackbar] = useState({ open: false, message: "", severity: "success" });
+  const [prorationData, setProrationData] = useState(null);
 
   const plan = form.plan;
   // Fetch add-ons to calculate totals
@@ -57,7 +58,7 @@ export default function CompanyPaymentStep({ form, onPaymentReady }) {
   }, []);
 
   // Convert selectedAddons from { value: qty } to [{ addonId, qty }]
-  const buildAddonsArray = () => {
+  const buildAddonsArray = useCallback(() => {
     if (!form.selectedAddons || typeof form.selectedAddons !== "object") {
       return [];
     }
@@ -77,7 +78,7 @@ export default function CompanyPaymentStep({ form, onPaymentReady }) {
     
     console.log("✅ Built addons array:", addonsArray);
     return addonsArray;
-  };
+  }, [form.selectedAddons, addonsData]);
 
   // Calculate total add-ons price based on selected quantities
   const calculateAddonsTotal = () => {
@@ -114,6 +115,30 @@ export default function CompanyPaymentStep({ form, onPaymentReady }) {
     fetchWallet();
   }, [fetchWallet]);
 
+  // Fetch proration data for upgrades
+  useEffect(() => {
+    const fetchProration = async () => {
+      if (!subscription || !subscription.subscriptionId || !plan || !plan._id) {
+        setProrationData(null);
+        return;
+      }
+
+      try {
+        const payload = {
+          newPlanId: plan._id,
+        };
+
+        const res = await api.post(`/saas/company/subscriptions/${subscription.subscriptionId}/upgrade/calculate`, payload);
+        setProrationData(res?.data);
+      } catch (err) {
+        console.error("Error fetching proration:", err);
+        setProrationData(null);
+      }
+    };
+
+    fetchProration();
+  }, [subscription, plan]);
+
   // ✅ Apply coupon logic
   const handleApplyCoupon = async (code) => {
     const appliedCode = code || couponCode;
@@ -146,7 +171,6 @@ export default function CompanyPaymentStep({ form, onPaymentReady }) {
   const planPrice = (plan?.pricePaise || 0) / 100;
   const addonsTotal = calculateAddonsTotal();
   const subtotal = planPrice + addonsTotal;
-  const totalAfterDiscount = Math.max(subtotal - discountAmount, 0);
   // ✅ Tax calculation respecting taxIncluded per item
   const TAX_PERCENT = 18;
   // build items in paise to avoid rounding issues
@@ -203,11 +227,28 @@ export default function CompanyPaymentStep({ form, onPaymentReady }) {
 
   // total tax for display = included portion + added portion
 
-  // total payable: subtotal - discount + ONLY tax on excluded base (included tax is already part of subtotal)
-  const totalWithTaxPaise = Math.max(0, subtotalPaise - discountPaise + taxOnExcludedPaise);
-  const totalWithTax = totalWithTaxPaise / 100;
-  const walletAppliedAmount = useWallet ? Math.min(walletBalance, totalWithTax) : 0;
-  const finalPayable = totalWithTax - walletAppliedAmount;
+  // Use proration data for upgrades, otherwise calculate locally
+  const isUpgrade = !!subscription && !!subscription.subscriptionId;
+  
+  let finalPayable = 0;
+  let totalWithTax = 0;
+  let walletAppliedAmount = 0;
+  let remainingValueDisplay = 0;
+  
+  if (isUpgrade && prorationData) {
+    // Use proration credit from backend and compute payable locally
+    remainingValueDisplay = (prorationData.remainingValuePaise || 0) / 100;
+    const upgradedPlanPrice = (prorationData.subtotalPaise || 0) / 100;
+    totalWithTax = Math.max(0, upgradedPlanPrice + addonsTotal - discountAmount - remainingValueDisplay);
+    walletAppliedAmount = useWallet ? Math.min(walletBalance, totalWithTax) : 0;
+    finalPayable = Math.max(0, totalWithTax - walletAppliedAmount);
+  } else {
+    // Local calculation for new subscriptions
+    const totalWithTaxPaise = Math.max(0, subtotalPaise - discountPaise + taxOnExcludedPaise);
+    totalWithTax = totalWithTaxPaise / 100;
+    walletAppliedAmount = useWallet ? Math.min(walletBalance, totalWithTax) : 0;
+    finalPayable = totalWithTax - walletAppliedAmount;
+  }
 
   // Get addon details for display
   const getAddonDetailsForDisplay = () => {
@@ -242,9 +283,12 @@ export default function CompanyPaymentStep({ form, onPaymentReady }) {
         walletAppliedAmount,
         discountAmount,
         addonsArray: buildAddonsArray(),
+        finalPayable,
+        isUpgrade,
+        prorationData: isUpgrade ? prorationData : null,
       });
     }
-  }, [couponCode, useWallet, walletAppliedAmount, discountAmount, form.selectedAddons, addonsData, onPaymentReady]);
+  }, [couponCode, useWallet, walletAppliedAmount, discountAmount, form.selectedAddons, addonsData, finalPayable, isUpgrade, prorationData, onPaymentReady, buildAddonsArray]);
 
   // ✅ Auto-switch wallet logic
   useEffect(() => {
@@ -253,7 +297,7 @@ export default function CompanyPaymentStep({ form, onPaymentReady }) {
     } else if (paymentMethod === "WALLET_ONLY" && walletBalance < totalWithTax) {
       setPaymentMethod("RAZORPAY");
     }
-  }, [walletBalance, totalWithTax, useWallet]);
+  }, [walletBalance, totalWithTax, useWallet, paymentMethod]);
 
   // ✅ Handle Wallet Add/Deduct
   const handleWalletAction = async () => {
@@ -449,10 +493,22 @@ export default function CompanyPaymentStep({ form, onPaymentReady }) {
             </Box>
           )}
 
-          {/* Amount after discount */}
+          {/* Proration Credit for Upgrades */}
+          {isUpgrade && remainingValueDisplay > 0 && (
+            <Box sx={{ display: "flex", justifyContent: "space-between", mb: 1.5, color: "info.main" }}>
+              <Typography>🔄 Current Plan Credit:</Typography>
+              <Typography fontWeight={600} color="info.main">-₹{remainingValueDisplay.toFixed(2)}</Typography>
+            </Box>
+          )}
+
+          {/* Amount after discount and proration */}
           <Box sx={{ display: "flex", justifyContent: "space-between", mb: 1.5 }}>
-            <Typography fontWeight={600}>After Discount:</Typography>
-            <Typography fontWeight={600}>₹{totalAfterDiscount.toFixed(2)}</Typography>
+            <Typography fontWeight={600}>
+              {isUpgrade ? "After Discount & Credit:" : "After Discount:"}
+            </Typography>
+            <Typography fontWeight={600}>
+              ₹{totalWithTax.toFixed(2)}
+            </Typography>
           </Box>
 
           {/* Tax Calculation */}

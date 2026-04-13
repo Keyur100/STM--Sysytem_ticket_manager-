@@ -77,6 +77,9 @@ const OrderSchema = new Schema({
     totalDiscountPaise: Number,
     taxableAmountPaise: Number,
     totalTaxPaise: Number,
+    // includedTaxPaise: Number,
+    // excludedTaxPaise: Number,
+    planCreditPaise: Number,
     totalPayablePaise: Number
   },
 

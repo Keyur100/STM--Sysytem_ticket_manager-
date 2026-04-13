@@ -139,8 +139,9 @@ const syncStep = async (req, res) => {
     const company = await CompanyService.getCompanyFullDetails(companyId);
     if (!company) return res.status(404).json({ message: 'Company not found' });
 
-    // Determine if plan has trial based on billingCycle in planSnapshot
-    const isTrial = company.planSnapshot?.name?.toLowerCase().includes("trial");
+    // Determine trial mode from explicit company flag, falling back to plan snapshot metadata
+    const isTrial = company.company.isTrialUsed === true ||
+      String(company.planSnapshot?.name || '').toLowerCase().includes('trial');
     const syncType = isTrial ? 'trial' : 'actual';
 
     let payload = {};

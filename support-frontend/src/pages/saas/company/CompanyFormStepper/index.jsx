@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { Stepper, Step, StepLabel, Box, Button, CircularProgress, Alert } from "@mui/material";
 import { useDispatch, useSelector } from "react-redux";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useLocation } from "react-router-dom";
 import {
   createDraftCompany,
   updateCompany,
@@ -21,10 +21,16 @@ const steps = ["Company & Contact Details", "Branch Details", "Plan Settings", "
 export default function CompanyFormStepper() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
+  const location = useLocation();
   const { id } = useParams();
   const companyDetails = useSelector((s) => s.company.selected);
 
-  const emptyForm = {
+  const isTrialConvertFlow = useMemo(
+    () => new URLSearchParams(location.search).get("fromTrialConvert") === "1",
+    [location.search]
+  );
+
+  const emptyForm = useMemo(() => ({
     _id: null,
     code: "",
     name: "",
@@ -34,7 +40,7 @@ export default function CompanyFormStepper() {
     contact: { personName: "", email: "", phone: "", address: "" },
     plan: null,
     selectedAddons: {},
-  };
+  }), []);
 
   const [activeStep, setActiveStep] = useState(0);
   const [form, setForm] = useState(emptyForm);
@@ -47,13 +53,15 @@ export default function CompanyFormStepper() {
     discountAmount: 0,
     addonsArray: [],
   });
+  const [isTrial, setIsTrial] = useState(false);
+  const [hasFetchedClientUser, setHasFetchedClientUser] = useState(false);
 
   /** Reset form for new company */
   useEffect(() => {
     if (!id) {
       setForm(emptyForm);
     }
-  }, [id]);
+  }, [id, emptyForm]);
 
   /** Fetch company if editing */
   useEffect(() => {
@@ -64,36 +72,54 @@ export default function CompanyFormStepper() {
   useEffect(() => {
     if (!id || !companyDetails) return;
 
-    setForm({
-      _id: companyDetails._id || null,
-      code: companyDetails.code || '',
-      name: companyDetails.name || "",
-      url: companyDetails.url || "",
-      panNo: companyDetails.panNo || "",
-      gstNo: companyDetails.gstNo || "",
-      contact: {
-        personName: companyDetails.contact?.personName || "",
-        email: companyDetails.contact?.email || "",
-        phone: companyDetails.contact?.phone || "",
-        address: companyDetails.contact?.address || "",
-      },
-      // planSnapshot is stored in company model and prefilled as 'plan' in form
-      plan: companyDetails.planSnapshot || null,
-      selectedAddons: companyDetails.selectedAddons || {},
-      // Persisted branchId (newer backend) or fallback to first branch
-      branchId: companyDetails.branchId || (companyDetails.branches && companyDetails.branches[0] ? companyDetails.branches[0]._id : null),
-      // Persisted client user reference (newer backend)
-      clientId: companyDetails.clientId || companyDetails.clientId || null,
-      // Prefill branch defaults from company
-      branchCompanyName: companyDetails.name || "",
-      branchName: companyDetails.name || "",
-      branchAddress: companyDetails.contact?.address || "",
-      branchPhone: companyDetails.contact?.phone || "",
-      branchEmail: companyDetails.contact?.email || "",
-      branchGstn: companyDetails.gstNo || companyDetails.gst || "",
-      branchPan: companyDetails.panNo || "",
-      branchCode: companyDetails.branches && companyDetails.branches[0] ? (companyDetails.branches[0].code || '') : '',
+    // Detect trial company
+    const isTrial = String(companyDetails.planSnapshot?.billingCycle || '').toLowerCase() === 'trial' ||
+                    String(companyDetails.planSnapshot?.name || '').toLowerCase().includes('trial');
+    setIsTrial(isTrial);
+
+    // Set the first step to 0 (Company Info) for new companies, but allow trial companies to start fresh from step 0 too
+    // to ensure they go through all steps and update isTrialUsed flag
+    // But skip this reset in trial convert flow to allow normal stepper progression
+    if (!id || (isTrial && !isTrialConvertFlow)) {
+      setActiveStep(0);
+    }
+
+    setForm((prev) => {
+      const currentPlanIsNonTrial = prev.plan && !String(prev.plan.name || '').toLowerCase().includes('trial');
+      const planValue = (isTrialConvertFlow && currentPlanIsNonTrial) ? prev.plan : (companyDetails.planSnapshot || null);
+
+      return {
+        _id: companyDetails._id || null,
+        code: companyDetails.code || '',
+        name: companyDetails.name || "",
+        url: companyDetails.url || "",
+        panNo: companyDetails.panNo || "",
+        gstNo: companyDetails.gstNo || "",
+        contact: {
+          personName: companyDetails.contact?.personName || "",
+          email: companyDetails.contact?.email || "",
+          phone: companyDetails.contact?.phone || "",
+          address: companyDetails.contact?.address || "",
+        },
+        // planSnapshot is stored in company model and prefilled as 'plan' in form
+        plan: planValue,
+        selectedAddons: companyDetails.selectedAddons || {},
+        // Persisted branchId (newer backend) or fallback to first branch
+        branchId: companyDetails.branchId || (companyDetails.branches && companyDetails.branches[0] ? companyDetails.branches[0]._id : null),
+        // Persisted client user reference (newer backend)
+        clientId: companyDetails.clientId || companyDetails.clientId || null,
+        // Prefill branch defaults from company
+        branchCompanyName: companyDetails.name || "",
+        branchName: companyDetails.name || "",
+        branchAddress: companyDetails.contact?.address || "",
+        branchPhone: companyDetails.contact?.phone || "",
+        branchEmail: companyDetails.contact?.email || "",
+        branchGstn: companyDetails.gstNo || companyDetails.gst || "",
+        branchPan: companyDetails.panNo || "",
+        branchCode: companyDetails.branches && companyDetails.branches[0] ? (companyDetails.branches[0].code || '') : '',
+      };
     });
+
     // If company has branches, prefill first branch fields (for edit flows)
     if (companyDetails.branches && companyDetails.branches.length > 0) {
       const b = companyDetails.branches[0];
@@ -111,8 +137,9 @@ export default function CompanyFormStepper() {
         branchLogo: b.logo || f.branchLogo,
       }));
     }
-    // If company has a primary client user id, fetch it and prefill contact fields
-    if (companyDetails.clientId) {
+    // If company has a primary client user id, fetch it and prefill contact fields (only once)
+    if (companyDetails.clientId && !hasFetchedClientUser) {
+      setHasFetchedClientUser(true);
       (async () => {
         try {
           const res = await api.get(`/saas/client-users/${companyDetails.clientId}`);
@@ -125,14 +152,15 @@ export default function CompanyFormStepper() {
               phone: client.phone || f.contact?.phone || '',
               address: f.contact?.address || '',
             } }));
-            try { handleChange('contact.personName', client.name); handleChange('contact.email', client.email); handleChange('contact.phone', client.phone); } catch (e) {}
+            // eslint-disable-next-line no-empty
+            try { handleChange('contact.personName', client.name); handleChange('contact.email', client.email); handleChange('contact.phone', client.phone); } catch (_e) {}
           }
-        } catch (e) {
+        } catch (_e) {
           // ignore fetch errors
         }
       })();
     }
-  }, [id, companyDetails]);
+  }, [id, companyDetails, isTrialConvertFlow, hasFetchedClientUser]);
 
   /** Handle form changes */
   const handleChange = (path, value) => {
@@ -238,7 +266,9 @@ export default function CompanyFormStepper() {
                 if (newBranchId) handleChange('branchId', newBranchId);
                 if (newClientId) handleChange('clientId', newClientId);
                 if (newBranchId) handleChange('branchCreated', true);
-              } catch (e) {}
+              } catch (_e) {
+                // handleChange errors are non-critical
+              }
             }
           } catch (err) {
             console.error('Failed to create/update branch from stepper', err);
@@ -255,18 +285,21 @@ export default function CompanyFormStepper() {
 
       // For other intermediate steps (plan/addons), update company as before
       if (form._id) {
+        const data = {
+          name: form.name,
+          url: form.url,
+          panNo: form.panNo,
+          gstNo: form.gstNo,
+          contact: form.contact,
+          selectedAddons: form.selectedAddons,
+        };
+        if (!isTrialConvertFlow) {
+          data.plan = form.plan;
+        }
         const action = await dispatch(
           updateCompany({
             id: form._id,
-            data: {
-              name: form.name,
-              url: form.url,
-              panNo: form.panNo,
-              gstNo: form.gstNo,
-              contact: form.contact,
-              plan: form.plan,
-              selectedAddons: form.selectedAddons,
-            },
+            data,
           })
         );
         if (action.error) {
@@ -293,7 +326,7 @@ export default function CompanyFormStepper() {
       case 1:
         return <BranchStep form={form} handleChange={handleChange} />;
       case 2:
-        return <PlanSettingsStep form={form} handleChange={handleChange} />;
+        return <PlanSettingsStep form={form} handleChange={handleChange} isTrialConvertFlow={isTrialConvertFlow} />;
       case 3:
         return <AddonsStep form={form} handleChange={handleChange} />;
       case 4:
@@ -345,6 +378,7 @@ export default function CompanyFormStepper() {
         couponCode: paymentData.couponCode || null,
         useWallet: paymentData.useWallet || false,
         walletAmountPaise: (paymentData.walletAppliedAmount || 0) * 100,
+        isTrialUsed: isTrial,
       };
 
       console.log("📦 Payment Payload:", payload);

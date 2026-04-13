@@ -96,7 +96,7 @@ export default function UpgradeDialog({ open, subscription, company, onClose, on
       setError("");
 
       const payload = {
-        newPlanId: form.plan._id,
+        newPlanId: form.plan,
         couponCode: paymentData?.couponCode || null,
         useWallet: paymentData?.useWallet || false,
       };
@@ -132,6 +132,7 @@ export default function UpgradeDialog({ open, subscription, company, onClose, on
         return (
           <CompanyPaymentStep
             form={form}
+            subscription={subscription}
             onUpdate={(updatedForm) => setForm((f) => ({ ...f, ...updatedForm }))}
             onSignedUp={() => onSuccess?.()}
             onPaymentReady={setPaymentData}

@@ -225,6 +225,30 @@ const upgradeSubscription = async (req, res) => {
   }
 };
 
+const calculateUpgradeProration = async (req, res) => {
+  try {
+    const { subscriptionId } = req.params;
+    const { newPlanId, couponCode, useWallet, addons = [] } = req.body;
+
+    if (!subscriptionId || !newPlanId) {
+      return sendError(res, 400, "subscriptionId and newPlanId are required");
+    }
+
+    const result = await CompanyService.calculateUpgradeProration({
+      subscriptionId,
+      newPlanId,
+      couponCode,
+      useWallet,
+      addons,
+    });
+
+    return sendSuccess(res, result, "Upgrade proration calculated successfully");
+  } catch (err) {
+    console.error("Error calculating upgrade proration:", err);
+    return sendError(res, 400, err.message || "Failed to calculate upgrade proration");
+  }
+};
+
 const reactivateSubscription = async (req, res) => {
   try {
     const { subscriptionId } = req.params;
@@ -394,6 +418,7 @@ module.exports = {
   getTransactions,
   recordCashPayment,
   upgradeSubscription,
+  calculateUpgradeProration,
   reactivateSubscription,
   downgradeSubscription,
   purchaseAddons,

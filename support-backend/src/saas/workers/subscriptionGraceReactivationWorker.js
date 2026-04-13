@@ -15,8 +15,9 @@ module.exports = async function runGraceReactivationWorker() {
   for (const s of expiredSubs) {
     try {
       const companyGrace = s.graceDays || DEFAULT_GRACE_DAYS;
-      if (!s.expiredAt) continue;
-      const graceUntil = s.expiredAt + (companyGrace * 24 * 60 * 60 * 1000);
+      const expiryAt = s.endAt || s.expiredAt;
+      if (!expiryAt) continue;
+      const graceUntil = expiryAt + (companyGrace * 24 * 60 * 60 * 1000);
       if (now > graceUntil) continue; // beyond grace
 
       // Look for a paid order for this subscription or a new paid order for reactivation

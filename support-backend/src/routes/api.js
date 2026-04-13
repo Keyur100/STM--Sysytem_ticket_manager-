@@ -20,7 +20,6 @@ const saasRoutes = require('../saas/routes');
 // saas require
 
 
-
 // Auth
 router.post("/auth/register", validation(require("../validators/auth.register")), tryCatch(authController.register));
 router.post("/auth/login", validation(require("../validators/auth.login")), tryCatch(authController.login));

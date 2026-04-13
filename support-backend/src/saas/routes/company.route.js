@@ -161,6 +161,14 @@ router.post(
   tryCatch(companyController.upgradeSubscription)
 );
 
+// Calculate upgrade proration
+router.post(
+  "/subscriptions/:subscriptionId/upgrade/calculate",
+  authJwt,
+  rbac("saas.subscription_upgrade"),
+  tryCatch(companyController.calculateUpgradeProration)
+);
+
 // Schedule downgrade / plan change (applies at next billing cycle)
 router.post(
   "/subscriptions/:subscriptionId/downgrade",

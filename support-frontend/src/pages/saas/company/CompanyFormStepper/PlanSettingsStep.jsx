@@ -27,7 +27,7 @@ import EmojiEventsIcon from "@mui/icons-material/EmojiEvents";
 import api from "../../../../api/axios";
 import Loader from "../../../../components/common/Loader";
 
-export default function PlanSettingsStep({ form, handleChange, plansOverride = null }) {
+export default function PlanSettingsStep({ form, handleChange, plansOverride = null, isTrialConvertFlow = false }) {
   const [plans, setPlans] = useState([]);
   const [selectedPlan, setSelectedPlan] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -41,34 +41,46 @@ export default function PlanSettingsStep({ form, handleChange, plansOverride = n
       } else {
         // if creating a new company (form._id not present) show only active plans
         const params = (form && !form._id) ? { params: { isActive: true } } : {};
-        const res = await api.get("/saas/plan", params);
+        let res = await api.get("/saas/plan", params);
         // backend wraps response in { success, message, data }
-        const payload = res?.data ?? res?.plans ?? res?.items ?? res ?? [];
-        setPlans(Array.isArray(payload) ? payload : payload.plans || []);
+        let payload = res?.data ?? res?.plans ?? res?.items ?? res ?? [];
+        let allPlans = Array.isArray(payload) ? payload : payload.plans || [];
+        // Only hide trial plans when in trial-to-actual conversion flow
+        if (isTrialConvertFlow && form._id) {
+          allPlans = allPlans.filter((p) => {
+            const planName = String(p.name || '').toLowerCase();
+            return !planName.includes('trial');
+          });
+        }
+
+        setPlans(allPlans);
       }
     } catch (err) {
       console.error("Failed to fetch plans:", err);
     } finally {
       setLoading(false);
     }
-  }, [plansOverride, form && form._id]);
+  }, [plansOverride, form]);
 
   useEffect(() => {
     fetchPlans();
   }, [fetchPlans]);
 
-  /** Select matching or default plan */
+  /** Auto-select first plan only when creating new company, otherwise respect existing selection */
   useEffect(() => {
     if (!plans.length) return;
 
     if (form.plan && form.plan._id) {
       const found = plans.find((p) => String(p._id) === String(form.plan._id));
-      if (found) setSelectedPlan(found);
-      return;
-    }
 
-    const defaultPlan = plans.find((p) => p.isDefault);
-    if (defaultPlan) handleSelectPlan(defaultPlan);
+
+if (found) {
+        setSelectedPlan(found);
+      }
+    } else if (!form._id) {
+      // Auto-select first plan only when creating new company
+      handleSelectPlan(plans[0]);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plans]);
 
@@ -139,7 +151,7 @@ export default function PlanSettingsStep({ form, handleChange, plansOverride = n
       handleChange("plan", planSnapshot);
       handleChange("effectivePermissions", perms);
     },
-    [form.plan, handleChange]
+    [form, handleChange]
   );
 
   /** Handlers for price, duration, user limits */
@@ -271,16 +283,19 @@ const PlanListSidebar = memo(
             boxShadow: "0 4px 15px rgba(0,0,0,0.06)",
           }}
         >
-          {loading ? (
-            <Loader />
-          ) : (
+          {
+          // loading ? (
+          //   <Loader />
+          // ) :
+           (
             plansWithModified.map((p) => (
               <PlanCard
                 key={p._id}
                 plan={p}
                 isSelected={selectedPlan && String(selectedPlan._id) === String(p._id)}
                 isModified={p.isModified}
-                onClick={() => onSelect(p)}
+                onClick={() => !p.isDisabled && onSelect(p)}
+                disabled={p.isDisabled}
                 themeMode={themeMode}
               />
             ))
@@ -292,7 +307,7 @@ const PlanListSidebar = memo(
 );
 
 /* ---------------- Plan Card ---------------- */
-const PlanCard = memo(({ plan, isSelected, isModified, onClick, themeMode }) => {
+const PlanCard = memo(({ plan, isSelected, isModified, onClick, themeMode, disabled }) => {
   const bgGradient = plan.isDefault
     ? themeMode === "light"
       ? "linear-gradient(90deg, #fff7e6, #ffe3b3)"
@@ -305,7 +320,8 @@ const PlanCard = memo(({ plan, isSelected, isModified, onClick, themeMode }) => 
     <Card
       onClick={onClick}
       sx={{
-        cursor: "pointer",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.6 : 1,
         border: isSelected ? "2px solid" : "1px solid #ddd",
         borderColor: isSelected ? "primary.main" : "transparent",
         borderRadius: 3,
@@ -362,6 +378,7 @@ const PlanCard = memo(({ plan, isSelected, isModified, onClick, themeMode }) => 
             {plan.description}
           </Typography>
         )}
+
       </CardContent>
     </Card>
   );
@@ -431,7 +448,7 @@ const PlanDetailPanel = React.memo(
           />
         </div>
       );
-    }, [togglePermission, toggleAll]);
+    }, []);
 
     if (!selectedPlan)
       return (

@@ -63,8 +63,8 @@ export default function CompanyList() {
   const [limit, setLimit] = useState(10);
   const [total, setTotal] = useState(0);
   const [q, setQ] = useState("");
-  const [order, setOrder] = useState("asc");
-  const [orderBy, setOrderBy] = useState("name");
+  const [order, setOrder] = useState("desc");
+  const [orderBy, setOrderBy] = useState("createdAt");
   const [selectedCompany, setSelectedCompany] = useState(null);
   
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -390,6 +390,15 @@ export default function CompanyList() {
                       {hasPaidOrders(detailsData.company) && hasPermission('saas.addon_purchase') && (
                         <Button variant="contained" color="secondary" onClick={() => setOpenAddons(true)}>
                           ➕ Buy Addons
+                        </Button>
+                      )}
+                      {detailsData.company.company?.isTrialUsed && (
+                        <Button 
+                          variant="contained" 
+                          color="warning"
+                          onClick={() => nav(`/companies/${detailsData.company.company?._id}/edit?fromTrialConvert=1`)}
+                        >
+                          🚀 Convert to Actual Plan
                         </Button>
                       )}
                 </Stack>

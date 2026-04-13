@@ -31,9 +31,11 @@ const CompanySchema = new Schema(
     
     status: {
       type: String,
-      enum: ["draft","partially_paid", "active", "expired", "over_limit", "suspended"],
+      enum: ["draft","pending_payment","partially_paid", "active", "expired", "over_limit", "suspended"],
       default: "draft",
     },
+    isTrialUsed: { type: Boolean, default: false, index: true },
+    isActualPlanUsed: { type: Boolean, default: false, index: true },
     isActive: { type: Boolean, default: true, index: true },
     isDeleted: { type: Boolean, default: false, index: true },
     createdBy: { type: Schema.Types.ObjectId, ref: "UserAuth" },
@@ -61,7 +63,7 @@ const CompanySchema = new Schema(
     // Store the plan snapshot assigned to this company. This is a company-specific
     // copy of the plan (price, modulePermissions, enabled flags) and must be
     // used for billing/permission decisions instead of the canonical plan doc.
-    planSnapshot: Schema.Types.Mixed,
+    planSnapshot: Schema.Types.Mixed,//modulePermissions[0].actions[0].enabled
     // Short code (unique/optional) for the company (e.g. tenantcompany code)
     code: { type: String, index: true, sparse: true },
     // Store addons selected by the company as a lightweight map
