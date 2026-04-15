@@ -13,25 +13,24 @@ import {
   Typography,
   Collapse,
   IconButton,
-  Paper
+  Paper,
+  Alert
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import api from '../../../api/axios';
 
 const STEP_LABELS = {
-  '1': 'Create company / branches / admin',
-  '2': 'Assign plan / orders / transactions',
-  '3': 'Assign permissions (module keys)',
-  '4': 'Financial year / Serial numbers',
-  '5': 'General settings'
+  '1': 'Step 1: Company details sync',
+  '2': 'Step 2: Permission changes (added/removed)',
 };
 
-export default function SyncModal({ open, onClose, companyId }) {
+export default function UpgradeDowngradeSyncModal({ open, onClose, companyId }) {
   const [logs, setLogs] = useState([]);
   const [running, setRunning] = useState({});
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState({});
   const [company, setCompany] = useState(null);
+  const [isNotUpgrade, setIsNotUpgrade] = useState(false);
 
   const fetchLogs = async () => {
     if (!companyId) return;
@@ -51,6 +50,12 @@ export default function SyncModal({ open, onClose, companyId }) {
     try {
       const res = await api.get(`/saas/company/${companyId}/details`);
       setCompany(res.data.company || null);
+      
+      // Check if this is an upgrade/downgrade by checking for previousSubscriptionId
+      const hasUpgradeFlag = res.data.company?.subscription?.previousSubscriptionId;
+      if (!hasUpgradeFlag) {
+        setIsNotUpgrade(true);//false
+      }
     } catch (err) {
       console.error('Failed to fetch company details', err);
     }
@@ -58,14 +63,11 @@ export default function SyncModal({ open, onClose, companyId }) {
 
   useEffect(() => {
     if (open) {
+      setIsNotUpgrade(false);
       fetchLogs();
       fetchCompanyDetails();
     }
-    // if (open) fetchCompanySummary();
   }, [open, companyId]);
-
-  // Sync modal should only show sync logs; company edit / client management
-  // is handled from the Companies list page.
 
   const runStep = async (step) => {
     if (!companyId) return;
@@ -74,7 +76,7 @@ export default function SyncModal({ open, onClose, companyId }) {
 
     try {
       const res = await api.post(
-        `/saas/company/${companyId}/provision/step/${step}`
+        `/saas/company/${companyId}/upgrade/${step}`
       );
       await fetchLogs();
       return res.data;
@@ -87,43 +89,33 @@ export default function SyncModal({ open, onClose, companyId }) {
   };
 
   const lastStatusForStep = (step) =>
-    logs.find((l) => String(l.step) === String(step)) || null;
+    logs.find((l) => String(l.step) === String(step) && l.type === 'upgrade') || null;
 
   const logsForStep = (step) =>
-    logs.filter((l) => String(l.step) === String(step));
+    logs.filter((l) => String(l.step) === String(step) && l.type === 'upgrade');
 
   const hasStepSuccess = (step) =>
-    logs.some((l) => String(l.step) === String(step) && l.status === 'success');
+    logs.some((l) => String(l.step) === String(step) && l.status === 'success' && l.type === 'upgrade');
 
   const toggleExpanded = (id) =>
     setExpanded((e) => ({ ...e, [id]: !e[id] }));
 
-  // Determine sync type based on company's plan billingCycle
-  const isTrial = company?.planSnapshot?.name?.toLowerCase().includes("trial");
-  const runButtonText = isTrial ? 'TEST RUN' : 'ACTUAL RUN';
-
   return (
     <Dialog open={!!open} onClose={onClose} fullWidth maxWidth="sm">
-      <DialogTitle>Stepwise Sync</DialogTitle>
+      <DialogTitle>Upgrade/Downgrade Sync (2 Steps)</DialogTitle>
 
       <DialogContent dividers>
-        {loading ? (
+        {isNotUpgrade ? (
+          <Alert severity="warning">
+            This subscription is not an upgrade or downgrade. Use "Stepwise Sync" for regular sync.
+          </Alert>
+        ) : loading ? (
           <Box display="flex" justifyContent="center" p={3}>
             <CircularProgress />
           </Box>
         ) : (
           <List>
-            {/* {companySummary && (
-              <Box sx={{ mb: 2, p: 1, border: '1px solid #eee', borderRadius: 1 }}>
-                <Typography variant="subtitle1">{companySummary.name || 'Company'}</Typography>
-                <Typography variant="caption">Code: {companySummary.code || '-'}</Typography>
-                <Typography variant="caption" sx={{ display: 'block' }}>Contact: {companySummary.contact?.email || '-'} / {companySummary.contact?.phone || '-'}</Typography>
-                <Box sx={{ mt: 1 }}>
-                  <Typography variant="caption">Open company from Companies list to edit</Typography>
-                </Box>
-              </Box>
-            )} */}
-            {['1', '2', '3', '4', '5'].map((s) => {
+            {['1', '2'].map((s) => {
               const last = lastStatusForStep(s);
               const history = logsForStep(s);
               const isRunning = !!running[s];
@@ -137,21 +129,6 @@ export default function SyncModal({ open, onClose, companyId }) {
                   isRunning ||
                   !hasStepSuccess('1') ||
                   hasStepSuccess('2');
-              } else if (s === '3') {
-                disabled =
-                  isRunning ||
-                  !hasStepSuccess('2') ||
-                  hasStepSuccess('3');
-              } else if (s === '4') {
-                disabled =
-                  isRunning ||
-                  !hasStepSuccess('3') ||
-                  hasStepSuccess('4');
-              } else if (s === '5') {
-                disabled =
-                  isRunning ||
-                  !hasStepSuccess('4') ||
-                  hasStepSuccess('5');
               }
 
               return (
@@ -171,12 +148,12 @@ export default function SyncModal({ open, onClose, companyId }) {
                         size="small"
                         variant="outlined"
                         onClick={() => runStep(s)}
-                        disabled={disabled}
+                        disabled={disabled || isNotUpgrade}
                       >
                         {isRunning ? (
                           <CircularProgress size={16} />
                         ) : (
-                          runButtonText
+                          'RUN'
                         )}
                       </Button>
 
@@ -222,9 +199,9 @@ export default function SyncModal({ open, onClose, companyId }) {
                                   primary={`${new Date(
                                     h.createdAt
                                   ).toLocaleString()} — ${h.status?.toUpperCase()}`}
-                                          secondary={
-                                            h.remoteResponse?.message || h.message || ''
-                                          }
+                                  secondary={
+                                    h.remoteResponse?.message || h.message || ''
+                                  }
                                 />
 
                                 <Button
@@ -248,7 +225,8 @@ export default function SyncModal({ open, onClose, companyId }) {
                                     overflow: 'auto',
                                     backgroundColor: '#f5f5f5',
                                     p: 1,
-                                    mt: 1
+                                    mt: 1,
+                                    fontSize: '0.75rem'
                                   }}
                                 >
                                   {JSON.stringify(
@@ -272,11 +250,11 @@ export default function SyncModal({ open, onClose, companyId }) {
 
         <Box mt={2}>
           <Typography variant="caption">
-            Recent logs (latest entries)
+            Recent upgrade sync logs
           </Typography>
 
           <List dense>
-            {logs.slice(0, 10).map((l) => (
+            {logs.filter((l) => l.type === 'upgrade').slice(0, 5).map((l) => (
               <ListItem key={l._id}>
                 <ListItemText
                   primary={`Step ${l.step} — ${l.status}`}
@@ -286,6 +264,11 @@ export default function SyncModal({ open, onClose, companyId }) {
                 />
               </ListItem>
             ))}
+            {logs.filter((l) => l.type === 'upgrade').length === 0 && (
+              <Typography variant="caption" sx={{ p: 1 }}>
+                No upgrade sync logs yet
+              </Typography>
+            )}
           </List>
         </Box>
       </DialogContent>
@@ -293,8 +276,6 @@ export default function SyncModal({ open, onClose, companyId }) {
       <DialogActions>
         <Button onClick={onClose}>Close</Button>
       </DialogActions>
-
-      {/* company edit/manage modals removed — handled from Companies list */}
     </Dialog>
   );
 }

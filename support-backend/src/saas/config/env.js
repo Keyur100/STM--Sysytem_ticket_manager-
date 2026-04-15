@@ -30,6 +30,11 @@ module.exports = {
     '4': process.env.SYNC_ACTUAL_REMOTE_URL_4 || 'http://app.edobiz.in/api/v1/company/provision/step4',
     '5': process.env.SYNC_ACTUAL_REMOTE_URL_5 || 'http://app.edobiz.in/api/v1/company/provision/step5',
   },
+  // Per-step remote URLs for upgrade/downgrade environment (2 steps only)
+  upgradeRemoteUrls: {
+    '1': process.env.SYNC_UPGRADE_REMOTE_URL_1 || 'http://app.edobiz.in/api/v1/company/upgrade/step1',
+    '2': process.env.SYNC_UPGRADE_REMOTE_URL_2 || 'http://app.edobiz.in/api/v1/company/upgrade/step2',
+  },
   // Fallback for both environments
   remoteUrl: process.env.SYNC_REMOTE_URL || 'http://testing.edobiz.in/api/v1',
   requestTimeout: 20000,

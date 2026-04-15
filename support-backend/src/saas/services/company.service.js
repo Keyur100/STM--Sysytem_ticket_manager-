@@ -260,41 +260,44 @@ async function activateSubscriptionIfEligible(order) {
        CREATE NEW SUBSCRIPTION
     ========================= */
     const planIdForSubscription = plan._id || plan.planId || planItem.itemId;
-    [subscription] = await subscriptionModel.create(
-      [
-        {
-          companyId: order.companyId,
-          planId: planIdForSubscription,
+    const subscriptionData = {
+      companyId: order.companyId,
+      planId: planIdForSubscription,
 
-          planSnapshot: {
-            planId: planIdForSubscription,
-            code: plan.code,
-            name: plan.name,
-            billingCycle: plan.billingCycle,
-            durationDays: plan.durationDays,
-            pricePaise: plan.pricePaise,
-            userPricing: plan.userPricing,
-            modulePermissions: plan.modulePermissions
-          },
+      planSnapshot: {
+        planId: planIdForSubscription,
+        code: plan.code,
+        name: plan.name,
+        billingCycle: plan.billingCycle,
+        durationDays: plan.durationDays,
+        pricePaise: plan.pricePaise,
+        userPricing: plan.userPricing,
+        modulePermissions: plan.modulePermissions
+      },
 
-          addonSnapshot: finalAddons,
+      addonSnapshot: finalAddons,
 
-          planPricePaise: planItem.priceAtPurchasePaise,
+      planPricePaise: planItem.priceAtPurchasePaise,
 
-          addonPricePaise: finalAddons.reduce(
-            (s, a) => s + a.pricePaise * a.qty,
-            0
-          ),
+      addonPricePaise: finalAddons.reduce(
+        (s, a) => s + a.pricePaise * a.qty,
+        0
+      ),
 
-          totalContractValuePaise: order.totals.totalPayablePaise,
+      totalContractValuePaise: order.totals.totalPayablePaise,
 
-          startAt,
-          endAt: expiryDate,
-          status: "ACTIVE",
-          activatedByOrderId: order._id
-        }
-      ]
-    );
+      startAt,
+      endAt: expiryDate,
+      status: "ACTIVE",
+      activatedByOrderId: order._id
+    };
+
+    // For upgrades, set previousSubscriptionId
+    if (order.orderType === "SUBSCRIPTION_UPGRADE" && order.upgradeFromSubscriptionId) {
+      subscriptionData.previousSubscriptionId = order.upgradeFromSubscriptionId;
+    }
+
+    [subscription] = await subscriptionModel.create([subscriptionData]);
   }
 
   // Link order → subscription
@@ -727,8 +730,12 @@ class CompanyService {
   /* =========================
      ACTIVATE SUBSCRIPTION
   ========================= */
+  let activatedSubscription = null;
   if (orderStatus === "paid") {
-    await activateSubscriptionIfEligible(order);
+    activatedSubscription = await activateSubscriptionIfEligible(order);
+    if (activatedSubscription && activatedSubscription._id) {
+      company.activeSubscriptionId = activatedSubscription._id;
+    }
   }
 
   /* =========================
@@ -1003,12 +1010,17 @@ class CompanyService {
 
   // Fetch company by ID for edit(some keys only)
   static async getCompanyById(companyId) {
-    return (
-      Company.findById(companyId)
-        // .populate("subscription")
-        // .populate("wishlist")
-        .lean()
-    );
+    const company = await Company.findById(companyId).lean();
+    if (!company) return null;
+
+    if (company.activeSubscriptionId) {
+      const subscription = await subscriptionModel.findById(company.activeSubscriptionId).lean().catch(() => null);
+      if (subscription) {
+        company.subscription = subscription;
+      }
+    }
+
+    return company;
   }
 
   // ✅ Fetch transactions for a company
@@ -1238,20 +1250,19 @@ class CompanyService {
 
       // Tax calculation respecting taxIncluded on new plan
       const taxPercent = 18;
-      let taxableAmount = 0;
       let taxFromIncluded = 0;
-      // If plan taxIncluded, a portion of subtotal is tax
+      let taxOnExcluded = 0;
+      const subtotalAfterDiscount = Math.max(0, subtotal - totalDiscount);
+
       if (newPlan.hasTax && newPlan.taxIncluded) {
-        taxFromIncluded = Math.round((subtotal * taxPercent) / (100+taxPercent));
-        taxableAmount = Math.max(0, subtotal - taxFromIncluded - totalDiscount);
-      } else {
-        taxableAmount = Math.max(0, subtotal - totalDiscount);
+        taxFromIncluded = Math.round((subtotal * taxPercent) / (100 + taxPercent));
+        taxOnExcluded = 0;
+      } else if (newPlan.hasTax) {
+        taxOnExcluded = Math.round(subtotalAfterDiscount * (taxPercent / 100));
       }
 
-      const totalTax = newPlan.hasTax ? taxFromIncluded + Math.round(taxableAmount * (taxPercent / 100)) : 0;
-
-      let totalPayable = taxableAmount + totalTax - remainingValue;
-      totalPayable = Math.max(0, totalPayable);
+      const totalTax = newPlan.hasTax ? taxFromIncluded + taxOnExcluded : 0;
+      const totalPayable = Math.max(0, subtotalAfterDiscount + taxOnExcluded - remainingValue);
 
       // Wallet handling
       let walletApplied = 0;
@@ -1321,10 +1332,10 @@ class CompanyService {
         totals: {
           subtotalPaise: subtotal,
           totalDiscountPaise: totalDiscount,
-          taxableAmountPaise: taxableAmount,
+          taxableAmountPaise: subtotalAfterDiscount,
           totalTaxPaise: totalTax,
-          // includedTaxPaise: taxFromIncluded,
-          // excludedTaxPaise: Math.round(taxableAmount * (taxPercent / 100)),
+          includedTaxPaise: taxFromIncluded,
+          excludedTaxPaise: taxOnExcluded,
           planCreditPaise: remainingValue,
           totalPayablePaise: totalPayable,
         },
@@ -2203,7 +2214,6 @@ class CompanyService {
     try {
       const company = await Company.findById(companyId).lean();
       if (!company) return null;
-
       // Get wallet
       const wallet = await walletModel.findOne({ companyId }).lean();
 
@@ -2225,6 +2235,7 @@ class CompanyService {
             status: subscription.status,
             endAt: subscription.endAt,
             addonSnapshot: subscription.addonSnapshot,
+            previousSubscriptionId: subscription.previousSubscriptionId,
           };
         }
       }
@@ -2315,6 +2326,7 @@ class CompanyService {
             totalDiscountPaise: o.totals?.totalDiscountPaise || 0,
             taxableAmountPaise: o.totals?.taxableAmountPaise || 0,
             totalTaxPaise: o.totals?.totalTaxPaise || 0,
+            planCreditPaise: o.totals?.planCreditPaise || 0,
             totalPayablePaise: o.totals?.totalPayablePaise || 0,
           },
           discounts: o.discounts || [],
@@ -2369,6 +2381,7 @@ class CompanyService {
           createdAt: company.createdAt,
           updatedAt: company.updatedAt,
           isTrialUsed : company.isTrialUsed || false,
+          subscription: planData ? { previousSubscriptionId: planData.previousSubscriptionId } : null,
         },
         plan: planData,
         wallet: wallet ? {

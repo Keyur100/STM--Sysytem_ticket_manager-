@@ -122,6 +122,29 @@ router.get(
   tryCatch(syncController.getSyncLogs)
 );
 
+// ============================ UPGRADE/DOWNGRADE SYNC ============================
+// Upgrade/Downgrade endpoints: /:companyId/upgrade/:step (supports steps 1..2)
+router.post(
+  "/:companyId/upgrade/:step",
+  authJwt,
+  rbac("company_update"),
+  tryCatch(syncController.syncUpgradeDowngrade)
+);
+
+// // Convenience: explicit endpoints for step1..step2 (optional)
+// router.post(
+//   "/:companyId/upgrade/step1",
+//   authJwt,
+//   rbac("company_update"),
+//   tryCatch(async (req, res) => syncController.syncUpgradeDowngrade({ ...req, params: { ...req.params, step: '1' } }, res))
+// );
+// router.post(
+//   "/:companyId/upgrade/step2",
+//   authJwt,
+//   rbac("company_update"),
+//   tryCatch(async (req, res) => syncController.syncUpgradeDowngrade({ ...req, params: { ...req.params, step: '2' } }, res))
+// );
+
 // // Global client users listing (no companyId) - frontend can call with ?all=true
 // router.get('/client-users', authJwt, rbac('company_view'), tryCatch(require('../controllers/clientUser.controller').listClientUsers));
 

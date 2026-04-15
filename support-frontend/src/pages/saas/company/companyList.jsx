@@ -54,6 +54,7 @@ import CashPaymentDialog from "./CashPaymentDialog";
 import UpgradeDialog from "../subscription/UpgradeDialog";
 import ReactivateDialog from "../subscription/ReactivateDialog";
 import SyncModal from './SyncModal';
+import UpgradeDowngradeSyncModal from './UpgradeDowngradeSyncModal';
 import AddonsPurchaseDialog from './AddonsPurchaseDialog';
 import BranchAdminForm from './BranchAdminForm';
 
@@ -75,6 +76,7 @@ export default function CompanyList() {
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [reactivateOpen, setReactivateOpen] = useState(false);
   const [syncModalOpen, setSyncModalOpen] = useState(false);
+  const [upgradeDowngradeSyncModalOpen, setUpgradeDowngradeSyncModalOpen] = useState(false);
   const [openAddons, setOpenAddons] = useState(false);
   const [branchAdminOpen, setBranchAdminOpen] = useState(false);
   const [selectedBranchId, setSelectedBranchId] = useState(null);
@@ -387,6 +389,16 @@ export default function CompanyList() {
                           🔄 Stepwise Sync
                         </Button>
                       )}
+                      {hasPaidOrders(detailsData.company) && detailsData.company?.company?.subscription?.previousSubscriptionId && (
+                        <Button 
+                          variant="outlined" 
+                          color="success"
+                          onClick={() => setUpgradeDowngradeSyncModalOpen(true)}
+                          disabled={syncLoading}
+                        >
+                          ⬆️ Upgrade/Downgrade Sync
+                        </Button>
+                      )}
                       {hasPaidOrders(detailsData.company) && hasPermission('saas.addon_purchase') && (
                         <Button variant="contained" color="secondary" onClick={() => setOpenAddons(true)}>
                           ➕ Buy Addons
@@ -562,7 +574,10 @@ export default function CompanyList() {
                         <Paper key={order._id} sx={{ p: 2, mt: 1.5, backgroundColor: 'warning.light', border: (theme) => `1px solid ${theme.palette.warning.main}` }}>
                           <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 1 }}>
                             <Typography variant="body2"><strong>Order #{order.orderNumber}</strong></Typography>
-                            <Typography variant="caption" sx={{ backgroundColor: order.status === "paid" ? 'success.light' : 'warning.light', p: 0.5, borderRadius: 1, fontWeight: "bold" }}>{order.status.toUpperCase()}</Typography>
+                            <Box sx={{ display: "flex", gap: 1 }}>
+                              <Chip label={order.orderType} size="small" color="primary" variant="outlined" />
+                              <Typography variant="caption" sx={{ backgroundColor: order.status === "paid" ? 'success.light' : 'warning.light', p: 0.5, borderRadius: 1, fontWeight: "bold" }}>{order.status.toUpperCase()}</Typography>
+                            </Box>
                           </Box>
                           <Typography variant="caption" sx={{ display: "block", mb: 1.5, color: "text.secondary" }}>{new Date(order.createdAt).toLocaleString()}</Typography>
 
@@ -593,6 +608,11 @@ export default function CompanyList() {
                                 {order.totals.totalDiscountPaise > 0 && (
                                   <Typography variant="caption" sx={{ color: "#4caf50" }}>
                                     <strong>Discount:</strong> -₹{((order.totals.totalDiscountPaise || 0) / 100).toFixed(2)}
+                                  </Typography>
+                                )}
+                                {order.totals.planCreditPaise > 0 && (
+                                  <Typography variant="caption" sx={{ color: "#2196f3" }}>
+                                    <strong>Plan Credit:</strong> -₹{((order.totals.planCreditPaise || 0) / 100).toFixed(2)}
                                   </Typography>
                                 )}
                                 <Typography variant="caption"><strong>Taxable:</strong> ₹{((order.totals.taxableAmountPaise || 0) / 100).toFixed(2)}</Typography>
@@ -720,6 +740,12 @@ export default function CompanyList() {
       <SyncModal
         open={syncModalOpen}
         onClose={() => setSyncModalOpen(false)}
+        companyId={detailsData.company?.company?._id}
+      />
+      {/* Upgrade/Downgrade Sync Modal */}
+      <UpgradeDowngradeSyncModal
+        open={upgradeDowngradeSyncModalOpen}
+        onClose={() => setUpgradeDowngradeSyncModalOpen(false)}
         companyId={detailsData.company?.company?._id}
       />
     </Box>

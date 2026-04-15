@@ -48,6 +48,7 @@ const SubscriptionSchema = new Schema(
       index: true,
     }, 
     // ADDED
+    previousSubscriptionId: { type: Schema.Types.ObjectId, ref: "Subscription" },
     planPricePaise: Number,
     addonPricePaise: Number,
     totalContractValuePaise: Number,

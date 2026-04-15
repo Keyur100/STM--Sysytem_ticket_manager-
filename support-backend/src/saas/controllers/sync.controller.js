@@ -41,6 +41,7 @@
 
 const CompanyService = require('../services/company.service');
 const { sendSecureRequest } = require('../services/sync.service.js');
+const subscriptionModel = require('../models/subscription.model');
 const { verifySignature } = require('../utils/crypto');
 const config = require('../config/env');
 const SyncLog = require('../models/syncLog.model');
@@ -142,6 +143,7 @@ const syncStep = async (req, res) => {
     // Determine trial mode from explicit company flag, falling back to plan snapshot metadata
     const isTrial = company.company.isTrialUsed === true ||
       String(company.planSnapshot?.name || '').toLowerCase().includes('trial');
+    
     const syncType = isTrial ? 'trial' : 'actual';
 
     let payload = {};
@@ -161,15 +163,11 @@ const syncStep = async (req, res) => {
     } else if (step === '4') {
       const s4 = await CompanyService.getCompanySyncStep4Data(companyId);
       if (!s4) return res.status(404).json({ message: 'Company not found' });
-      payload = { company_id: s4.company_id,  };
-
-      // payload = { company_id: s4.company_id, financialYear: s4.financialYear || null, serialNumbers: s4.serialNumbers || null };
+      payload = { company_id: s4.company_id };
     } else if (step === '5') {
       const s5 = await CompanyService.getCompanySyncStep5Data(companyId);
       if (!s5) return res.status(404).json({ message: 'Company not found' });
       payload = { company_id: s5.company_id };
-
-      // payload = { company_id: s5.company_id, settings: s5.settings || {} };
     } else {
       return res.status(400).json({ message: 'Invalid step' });
     }
@@ -219,7 +217,149 @@ const getSyncLogs = async (req, res) => {
   }
 };
 
-module.exports = { syncCompany, webhookHandler, syncStep, getSyncLogs };
+/**
+ * POST /saas/:companyId/sync/upgrade/:step
+ * step values: 1,2
+ * Upgrade/Downgrade sync with 2 steps (permission-aware)
+ */
+const syncUpgradeDowngrade = async (req, res) => {
+  try {
+    const companyId = req.params.companyId;
+    const step = String(req.params.step || '');
+    if (!companyId) return res.status(400).json({ message: 'companyId required' });
+
+    // Validate step is 1 or 2
+    if (!['1', '2'].includes(step)) {
+      return res.status(400).json({ message: 'Invalid step. Only steps 1-2 supported for upgrade sync' });
+    }
+
+    // Get company record and current subscription from the subscription model
+    const company = await CompanyService.getCompanyById(companyId);
+    if (!company) return res.status(404).json({ message: 'Company not found' });
+
+    const currentSubscription = company.activeSubscriptionId
+      ? await subscriptionModel.findById(company.activeSubscriptionId).lean()
+      : await subscriptionModel.findOne({ companyId, status: 'active' }).sort({ createdAt: -1 }).lean();
+
+    if (!currentSubscription) {
+      return res.status(400).json({ message: 'No active subscription found for company' });
+    }
+
+    if (!currentSubscription.previousSubscriptionId) {
+      return res.status(400).json({ message: 'This subscription is not an upgrade/downgrade' });
+    }
+
+    let payload = {};
+
+    if (step === '1') {
+      // Step 1: Send company details similar to provision step 1
+      const s1 = await CompanyService.getCompanySyncStep2Data(companyId);
+      if (!s1) return res.status(404).json({ message: 'Company not found' });
+      payload = { company_id: s1.company_id, plan: s1.plan || {}, orderSummary: s1.orderSummary || {}, transactions: s1.transactions || [], wallet: s1.wallet || {} };
+    } else if (step === '2') {
+      // Step 2: Send permission changes (extraAddedPermission and removedPermission only)
+      const s3 = await CompanyService.getCompanySyncStep3Data(companyId);
+      if (!s3) return res.status(404).json({ message: 'Company not found' });
+
+      // Compare permissions with previous subscription
+const previousSubscription = await subscriptionModel.findById(currentSubscription.previousSubscriptionId).lean();
+        if (previousSubscription && previousSubscription.planSnapshot?.modulePermissions) {
+          const previousPermissions = previousSubscription.planSnapshot.modulePermissions;
+          const currentPermissions = currentSubscription.planSnapshot?.modulePermissions || [];
+
+        // Calculate extraAddedPermission and removedPermission based on enabled status
+        const extraAddedPermission = [];
+        const removedPermission = [];
+
+        // Create maps for easier lookup
+        const previousPermMap = {};
+        previousPermissions.forEach(module => {
+          if (module.actions) {
+            module.actions.forEach(action => {
+              const key = `${module.moduleKey}:${action.key}`;
+              previousPermMap[key] = action.enabled;
+            });
+          }
+        });
+
+        const currentPermMap = {};
+        currentPermissions.forEach(module => {
+          if (module.actions) {
+            module.actions.forEach(action => {
+              const key = `${module.moduleKey}:${action.key}`;
+              currentPermMap[key] = action.enabled;
+            });
+          }
+        });
+
+        // Compare permissions
+        Object.keys(currentPermMap).forEach(permKey => {
+          const currentEnabled = currentPermMap[permKey];
+          const previousEnabled = previousPermMap[permKey];
+
+          // If current has enabled: true and previous had enabled: false or undefined
+          if (currentEnabled === true && previousEnabled !== true) {
+            extraAddedPermission.push(permKey);
+          }
+          // If current has enabled: false and previous had enabled: true
+          else if (currentEnabled === false && previousEnabled === true) {
+            removedPermission.push(permKey);
+          }
+        });
+
+        // Check for permissions that exist in previous but not in current (removed)
+        Object.keys(previousPermMap).forEach(permKey => {
+          if (!(permKey in currentPermMap) && previousPermMap[permKey] === true) {
+            removedPermission.push(permKey);
+          }
+        });
+
+        payload = {
+          company_id: s3.company_id,
+          extraAddedPermission,
+          removedPermission
+        };
+      } else {
+        payload = { company_id: s3.company_id };
+      }
+    }
+
+    // Get upgrade remote URLs and send request
+    const stepUrl = config.upgradeRemoteUrls?.[step];
+    if (!stepUrl) {
+      return res.status(500).json({ message: `Upgrade step ${step} URL not configured` });
+    }
+
+    try {
+      const response = await sendSecureRequest(payload, stepUrl);
+      // record success log
+      await SyncLog.create({
+        companyId,
+        step,
+        status: 'success',
+        message: 'OK',
+        type: 'upgrade',
+        remoteResponse: response?.data || null
+      });
+      return res.status(200).json({ message: 'Upgrade sync step successful', remote: response.data || null });
+    } catch (err) {
+      await SyncLog.create({
+        companyId,
+        step,
+        status: 'failed',
+        message: err.message || String(err),
+        type: 'upgrade',
+        remoteResponse: err.response?.data || null
+      });
+      return res.status(502).json({ message: 'Remote call failed', error: err.message || String(err) });
+    }
+  } catch (err) {
+    console.error('syncUpgradeDowngrade error:', err);
+    return res.status(500).json({ message: 'Upgrade sync failed', error: err.response?.data?.message || String(err) });
+  }
+};
+
+module.exports = { syncCompany, webhookHandler, syncStep, syncUpgradeDowngrade, getSyncLogs };
 
 // POST /saas/company/:companyId/stats
 const companyStats = async (req, res) => {
