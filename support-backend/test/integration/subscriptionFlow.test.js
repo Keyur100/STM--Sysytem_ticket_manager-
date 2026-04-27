@@ -106,7 +106,7 @@ describe('Subscription flow integration', () => {
 
     // 6. Call reactivate endpoint
     const reactRes = await request(app)
-      .post(`/api/saas/subscriptions/${subscription._id.toString()}/reactivate`)
+      .post(`/api/saas/company/${subscription._id.toString()}/reactivate`)
       .set('Authorization', `Bearer ${token}`)
       .send({ useWallet: false });
 

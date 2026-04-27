@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from "react";
-import { Stepper, Step, StepLabel, Box, Button, CircularProgress, Alert } from "@mui/material";
+import { Stepper, Step, StepLabel, Box, Button, CircularProgress, Alert, StepIcon, useTheme } from "@mui/material";
 import { useDispatch, useSelector } from "react-redux";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import {
@@ -23,6 +23,7 @@ export default function CompanyFormStepper() {
   const navigate = useNavigate();
   const location = useLocation();
   const { id } = useParams();
+  const theme = useTheme();
   const companyDetails = useSelector((s) => s.company.selected);
 
   const isTrialConvertFlow = useMemo(
@@ -46,6 +47,8 @@ export default function CompanyFormStepper() {
   const [form, setForm] = useState(emptyForm);
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [paymentError, setPaymentError] = useState(null);
+  const [stepErrors, setStepErrors] = useState({});
+  const [visibleErrorStep, setVisibleErrorStep] = useState(null);
   const [paymentData, setPaymentData] = useState({
     couponCode: null,
     useWallet: false,
@@ -162,6 +165,16 @@ export default function CompanyFormStepper() {
     }
   }, [id, companyDetails, isTrialConvertFlow, hasFetchedClientUser]);
 
+  /** Auto-dismiss error alerts after 5-10 seconds */
+  useEffect(() => {
+    if (visibleErrorStep !== null) {
+      const timer = setTimeout(() => {
+        setVisibleErrorStep(null);
+      }, 7000); // 7 seconds (between 5-10)
+      return () => clearTimeout(timer);
+    }
+  }, [visibleErrorStep]);
+
   /** Handle form changes */
   const handleChange = (path, value) => {
     setForm((prev) => {
@@ -194,11 +207,15 @@ export default function CompanyFormStepper() {
         // If the action failed (validation / isExist), do not proceed
         if (action.error) {
           const msg = action.payload?.message || action.payload?.error || action.error.message || 'Failed to create draft';
-          setPaymentError(msg);
+          setStepErrors((prev) => ({ ...prev, [activeStep]: msg }));
+          setVisibleErrorStep(activeStep);
           return;
         }
         const created = action.payload;
-        if (created && created._id) setForm((f) => ({ ...f, _id: created._id }));
+        if (created && created._id) {
+          setForm((f) => ({ ...f, _id: created._id }));
+          setStepErrors((prev) => ({ ...prev, [activeStep]: null }));
+        }
       } else {
         await dispatch(
           updateCompany({
@@ -213,6 +230,7 @@ export default function CompanyFormStepper() {
             },
           })
         );
+        setStepErrors((prev) => ({ ...prev, [activeStep]: null }));
       }
       setActiveStep((s) => s + 1);
       return;
@@ -252,6 +270,7 @@ export default function CompanyFormStepper() {
             if (form.branchId) {
               await api.put(`/saas/branch/${form.branchId}`, payload);
               setForm((f) => ({ ...f, branchCreated: true }));
+              setStepErrors((prev) => ({ ...prev, [activeStep]: null }));
             } else {
               const res = await api.post('/saas/branch', payload);
               const wrapper = res?.data || res;
@@ -269,12 +288,14 @@ export default function CompanyFormStepper() {
               } catch (_e) {
                 // handleChange errors are non-critical
               }
+              setStepErrors((prev) => ({ ...prev, [activeStep]: null }));
             }
           } catch (err) {
             console.error('Failed to create/update branch from stepper', err);
             const isExist = err?.response?.data?.isExist || err?.response?.data?.error === 'isExist';
             const message = err?.response?.data?.message || err?.message || 'Failed to create/update branch';
-            setPaymentError(message);
+            setStepErrors((prev) => ({ ...prev, [activeStep]: message }));
+            setVisibleErrorStep(activeStep);
             if (isExist) return; // don't advance to next step
           }
         }
@@ -303,9 +324,12 @@ export default function CompanyFormStepper() {
           })
         );
         if (action.error) {
-          setPaymentError(action.error.message || 'Failed to update company');
+          const message = action.error.message || 'Failed to update company';
+          setStepErrors((prev) => ({ ...prev, [activeStep]: message }));
+          setVisibleErrorStep(activeStep);
           return;
         }
+        setStepErrors((prev) => ({ ...prev, [activeStep]: null }));
       }
       setActiveStep((s) => s + 1);
       return;
@@ -363,13 +387,16 @@ export default function CompanyFormStepper() {
   /** Handle Payment */
   const handlePayment = async () => {
     if (!form._id) {
-      setPaymentError("Company draft missing. Please go back and create draft.");
+      const errorMsg = "Company draft missing. Please go back and create draft.";
+      setStepErrors((prev) => ({ ...prev, [activeStep]: errorMsg }));
+      setVisibleErrorStep(activeStep);
       return;
     }
 
     try {
       setPaymentLoading(true);
       setPaymentError(null);
+      setStepErrors((prev) => ({ ...prev, [activeStep]: null }));
 
       const payload = {
         companyId: form._id,
@@ -385,10 +412,19 @@ export default function CompanyFormStepper() {
 
       const action = await dispatch(signupCompany(payload));
       if (action.payload) {
+        setStepErrors((prev) => ({ ...prev, [activeStep]: null }));
         navigate("/companies");
+      } else if (action.error) {
+        const errorMsg = action.error.message || "Payment failed. Please try again.";
+        setStepErrors((prev) => ({ ...prev, [activeStep]: errorMsg }));
+        setVisibleErrorStep(activeStep);
+        setPaymentError(errorMsg);
       }
     } catch (err) {
-      setPaymentError(err?.message || "Payment failed. Please try again.");
+      const errorMsg = err?.message || "Payment failed. Please try again.";
+      setStepErrors((prev) => ({ ...prev, [activeStep]: errorMsg }));
+      setVisibleErrorStep(activeStep);
+      setPaymentError(errorMsg);
       console.error("Payment error:", err);
     } finally {
       setPaymentLoading(false);
@@ -398,31 +434,68 @@ export default function CompanyFormStepper() {
   // buildAddonsArray removed — CompanyPaymentStep computes its own addon array
 
   return (
-    <Box>
+    <Box sx={{ width: "100%" }}>
+      {/* Stepper with Error States */}
       <Stepper activeStep={activeStep}>
-        {steps.map((label) => (
-          <Step key={label}>
-            <StepLabel>{label}</StepLabel>
+        {steps.map((label, idx) => (
+          <Step key={label} completed={activeStep > idx} error={Boolean(stepErrors[idx])}>
+            <StepLabel error={Boolean(stepErrors[idx])} title={stepErrors[idx]}>
+              {label}
+            </StepLabel>
           </Step>
         ))}
       </Stepper>
 
-      <Box mt={3}>{renderStepContent(activeStep)}</Box>
-
-      {paymentError && (
-        <Alert severity="error" sx={{ mt: 2 }}>
-          {paymentError}
+      {/* Step Errors Below Stepper */}
+      {visibleErrorStep === activeStep && stepErrors[activeStep] && (
+        <Alert 
+          severity="error" 
+          sx={{ mt: 2, mb: 1 }}
+          onClose={() => setVisibleErrorStep(null)}
+          closeText="Close"
+        >
+          {stepErrors[activeStep]}
         </Alert>
       )}
 
-      <Box mt={3} display="flex" justifyContent="space-between">
-        <Button disabled={activeStep === 0} onClick={handleBack}>
-          Back
+      {/* Navigation Buttons - Top Position */}
+      <Box 
+        sx={{ 
+          display: "flex", 
+          justifyContent: "space-between", 
+          gap: 2,
+          mt: 3, 
+          mb: 3,
+          p: 2,
+          backgroundColor: theme.palette.mode === "dark" ? theme.palette.grey[800] : theme.palette.grey[100],
+          borderRadius: 1,
+          alignItems: "center",
+          border: `1px solid ${theme.palette.divider}`,
+        }}
+      >
+        <Button 
+          disabled={activeStep === 0} 
+          onClick={handleBack}
+          variant="outlined"
+        >
+          ← Back
         </Button>
+        
+        <Box sx={{ 
+          textAlign: "center", 
+          fontSize: "0.875rem", 
+          color: theme.palette.text.secondary,
+        }}>
+          Step {activeStep + 1} of {steps.length}: <strong style={{ color: theme.palette.text.primary }}>
+            {steps[activeStep]}
+          </strong>
+        </Box>
+
         <Button 
           variant="contained" 
           onClick={activeStep === steps.length - 1 ? handlePayment : handleNext}
           disabled={!validateStep() || paymentLoading}
+          sx={{ minWidth: 150 }}
         >
           {paymentLoading ? (
             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
@@ -430,10 +503,29 @@ export default function CompanyFormStepper() {
               Processing...
             </Box>
           ) : (
-            activeStep === steps.length - 1 ? "Confirm & Pay" : "Next"
+            activeStep === steps.length - 1 ? "Confirm & Pay →" : "Next →"
           )}
         </Button>
       </Box>
+
+      {/* Step Content */}
+      <Box sx={{ 
+        mt: 3, 
+        p: 2, 
+        backgroundColor: theme.palette.mode === "dark" ? theme.palette.grey[900] : theme.palette.grey[50],
+        borderRadius: 1, 
+        minHeight: 300,
+        border: `1px solid ${theme.palette.divider}`,
+      }}>
+        {renderStepContent(activeStep)}
+      </Box>
+
+      {/* General Payment Error Alert */}
+      {paymentError && (
+        <Alert severity="error" sx={{ mt: 3 }}>
+          {paymentError}
+        </Alert>
+      )}
     </Box>
   );
 }

@@ -22,25 +22,25 @@ const routesConfig = [
   //   component: React.lazy(() => import("./pages/Dashboard")),
   //   permission: "dashboard.read",
   // },
-  // {                                                                                                                                                                                                                    
-  //   label: "Users",
-  //   icon: PeopleIcon,
-  //   path: "/users",
-  //   permission: "user.read",
-  //   component: React.lazy(() => import("./pages/users/UsersList")),
-  //   routes: [
-  //     {
-  //       path: "new",
-  //       component: React.lazy(() => import("./pages/users/UserAddEdit/UserForm")),
-  //       permission: "user.create",
-  //     },
-  //     {
-  //       path: ":id/edit",
-  //       component: React.lazy(() => import("./pages/users/UserAddEdit/UserForm")),
-  //       permission: "user.update",
-  //     },
-  //   ],
-  // },
+  {                                                                                                                                                                                                                    
+    label: "Users",
+    icon: PeopleIcon,
+    path: "/users",
+    permission: "user.read",
+    component: React.lazy(() => import("./pages/users/UsersList")),
+    routes: [
+      {
+        path: "new",
+        component: React.lazy(() => import("./pages/users/UserAddEdit/UserForm")),
+        permission: "user.create",
+      },
+      {
+        path: ":id/edit",
+        component: React.lazy(() => import("./pages/users/UserAddEdit/UserForm")),
+        permission: "user.update",
+      },
+    ],
+  },
   // {
   //   label: "Roles",
   //   icon: SettingsIcon,

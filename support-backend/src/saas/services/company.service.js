@@ -1,4 +1,22 @@
 // src/saas/services/company.service.js
+// switch(order.orderType) {
+
+//  case 'SUBSCRIPTION_PURCHASE':
+//    createSubscription();
+//    break;
+
+//  case 'SUBSCRIPTION_RENEWAL':
+//    updateExistingSubscriptionDates();
+//    break;
+
+//  case 'SUBSCRIPTION_REACTIVATE':
+//    reviveExistingSubscription();
+//    break;
+
+//  case 'SUBSCRIPTION_UPGRADE':
+//    cancelOldCreateNew();
+//    break;
+// }
 const Company = require("../models/company.model");
 const WalletService = require("./wallet.service");
 const SubscriptionService = require("./subscription.service");
@@ -7,6 +25,7 @@ const PaymentService = require("./payment.service");
 const { env } = require("../constants/saas.constant");
 const { enqueueJob } = require("../libs/jobQueue");
 const CouponService = require("./coupon.service");
+const { TAX_PERCENT, TAX_NAME, GRACE_DAYS, DAY_MS } = require("../constants/subscription.constant");
 const orderModel = require("../models/order.model");
 const paymentModel = require("../models/payment.model");
 const walletModel = require("../models/wallet.model");
@@ -24,8 +43,6 @@ const { CouponType } = require("../constants/coupon.constant");
 const branchModel = require('../models/branch.model');
 const clientUserModel = require('../models/clientUser.model');
 const { formatDate } = require("../utils/date.util");
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 async function loadCompanyPlanSnapshot(companyId) {
   if (!companyId) return null;
@@ -120,17 +137,13 @@ function planIsTrial(plan) {
   return  planName.includes('trial');
 }
 
-async function activateSubscriptionIfEligible(order) {
-  if (order.status !== "paid") return null;
-  if (order.subscriptionId) return null;
-
+/* =========================
+   HELPER: Validate & resolve plan
+========================= */
+async function validateAndResolvePlan(order) {
   const planItem = order.items.find(i => i.type === "plan");
   if (!planItem) throw new Error("Paid order missing plan item");
 
-  const now = Date.now();
-
-  // Prefer company-specific planSnapshot where available (company may have
-  // a customized snapshot). Fallback to canonical plan document.
   let plan = await loadCompanyPlanSnapshot(order.companyId);
   if (!plan) {
     plan = await planModel.findById(planItem.itemId);
@@ -143,35 +156,13 @@ async function activateSubscriptionIfEligible(order) {
     plan._id = planItem.itemId;
   }
 
-  // Take intended start from order (for renewal/reactivation), else now
-  const startAt = order.meta?.intendedStartAt || now;
-  const expiryDate = calculateSubscriptionExpiry(plan, startAt);
+  return { plan, planItem };
+}
 
-  /* =========================
-     HANDLE UPGRADE
-  ========================= */
-  let carriedAddons = [];
-
-  if (order.orderType === "SUBSCRIPTION_UPGRADE") {
-    const oldSub = await subscriptionModel.findById(
-      order.upgradeFromSubscriptionId
-    );
-
-    if (!oldSub || oldSub.status !== "ACTIVE") {
-      throw new Error("Invalid upgrade source subscription");
-    }
-
-    carriedAddons = oldSub.addonSnapshot || [];
-
-    // Cancel old subscription
-    oldSub.status = "CANCELLED";
-    oldSub.endAt = now - 1;
-    await oldSub.save();
-  }
-
-  /* =========================
-     COLLECT ADDONS FROM ORDER (include addon provides & duration)
-  ========================= */
+/* =========================
+   HELPER: Collect addons from order
+========================= */
+async function collectOrderAddons(order) {
   const addonItems = order.items.filter(i => i.type === "addon");
   const addonSnapshots = [];
   for (const it of addonItems) {
@@ -193,126 +184,84 @@ async function activateSubscriptionIfEligible(order) {
       endAt: end,
     });
   }
+  return addonSnapshots;
+}
 
-  // If renewal/reactivation and no addons in order, carry old ones
-  if (
-    addonSnapshots.length === 0 &&
-    ["SUBSCRIPTION_RENEWAL", "SUBSCRIPTION_REACTIVATE"].includes(order.orderType)
-  ) {
-    carriedAddons = order.meta?.reactivateFromSubscriptionId
-      ? (await Subscription.findById(order.meta.reactivateFromSubscriptionId))
-          ?.addonSnapshot || []
-      : [];
+/* =========================
+   HELPER: Determine final addons (carried vs new)
+========================= */
+async function getCarriedAddons(order, orderType) {
+  if (orderType !== "SUBSCRIPTION_RENEWAL" && orderType !== "SUBSCRIPTION_REACTIVATE") {
+    return [];
   }
+  
+  const sourceSubId = order.meta?.reactivateFromSubscriptionId;
+  if (!sourceSubId) return [];
+  
+  const sourceSub = await subscriptionModel.findById(sourceSubId);
+  return sourceSub?.addonSnapshot || [];
+}
 
-  const finalAddons = addonSnapshots.length
-    ? addonSnapshots
-    : carriedAddons;
+/* =========================
+   HELPER: Build subscription data object
+========================= */
+function buildSubscriptionData(plan, planItem, finalAddons, order, startAt, expiryDate, orderType) {
+  const now = Date.now();
+  const planIdForSubscription = plan._id || plan.planId || planItem.itemId;
 
-  /* =========================
-     CHECK FOR EXISTING EXPIRED SUBSCRIPTION TO REACTIVATE
-  ========================= */
-  let existingExpiredSubscription = null;
-  if (order.orderType === "SUBSCRIPTION_PURCHASE") {
-    // For trial-to-actual conversion, check if there's an EXPIRED subscription to reactivate
-    existingExpiredSubscription = await subscriptionModel.findOne({
-      companyId: order.companyId,
-      status: 'EXPIRED'
-    }).sort({ createdAt: -1 }); // Get the most recent expired subscription
-  }
-
-  let subscription;
-  if (existingExpiredSubscription) {
-    /* =========================
-       REACTIVATE EXISTING EXPIRED SUBSCRIPTION
-    ========================= */
-    // Update the existing subscription to ACTIVE with new plan details
-    subscription = await subscriptionModel.findByIdAndUpdate(
-      existingExpiredSubscription._id,
-      {
-        $set: {
-          planId: planIdForSubscription,
-          planSnapshot: {
-            planId: planIdForSubscription,
-            code: plan.code,
-            name: plan.name,
-            billingCycle: plan.billingCycle,
-            durationDays: plan.durationDays,
-            pricePaise: plan.pricePaise,
-            userPricing: plan.userPricing,
-            modulePermissions: plan.modulePermissions
-          },
-          addonSnapshot: finalAddons,
-          planPricePaise: planItem.priceAtPurchasePaise,
-          addonPricePaise: finalAddons.reduce((s, a) => s + a.pricePaise * a.qty, 0),
-          totalContractValuePaise: order.totals.totalPayablePaise,
-          startAt,
-          endAt: expiryDate,
-          status: "ACTIVE",
-          activatedByOrderId: order._id,
-          updatedAt: now
-        }
-      },
-      { new: true }
-    );
-  } else {
-    /* =========================
-       CREATE NEW SUBSCRIPTION
-    ========================= */
-    const planIdForSubscription = plan._id || plan.planId || planItem.itemId;
-    const subscriptionData = {
-      companyId: order.companyId,
+  const baseData = {
+    companyId: order.companyId,
+    planId: planIdForSubscription,
+    planSnapshot: {
       planId: planIdForSubscription,
+      code: plan.code,
+      name: plan.name,
+      billingCycle: plan.billingCycle,
+      durationDays: plan.durationDays,
+      pricePaise: plan.pricePaise,
+      userPricing: plan.userPricing,
+      modulePermissions: plan.modulePermissions,
+      taxConfig: plan.taxConfig || { hasTax: plan.hasTax || false, taxIncluded: plan.taxIncluded || false }
+    },
+    addonSnapshot: finalAddons,
+    planPricePaise: planItem.priceAtPurchasePaise,
+    addonPricePaise: finalAddons.reduce((s, a) => s + a.pricePaise * a.qty, 0),
+    totalContractValuePaise: order.totals.totalPayablePaise,
+    startAt,
+    endAt: expiryDate,
+    status: "ACTIVE",
+    lifecycle: "ACTIVE",
+    graceDays: GRACE_DAYS,
+    graceEndAt: expiryDate + (GRACE_DAYS * DAY_MS),
+    lastCheckedAt: now,
+    activatedByOrderId: order._id
+  };
 
-      planSnapshot: {
-        planId: planIdForSubscription,
-        code: plan.code,
-        name: plan.name,
-        billingCycle: plan.billingCycle,
-        durationDays: plan.durationDays,
-        pricePaise: plan.pricePaise,
-        userPricing: plan.userPricing,
-        modulePermissions: plan.modulePermissions
-      },
-
-      addonSnapshot: finalAddons,
-
-      planPricePaise: planItem.priceAtPurchasePaise,
-
-      addonPricePaise: finalAddons.reduce(
-        (s, a) => s + a.pricePaise * a.qty,
-        0
-      ),
-
-      totalContractValuePaise: order.totals.totalPayablePaise,
-
-      startAt,
-      endAt: expiryDate,
-      status: "ACTIVE",
-      activatedByOrderId: order._id
-    };
-
-    // For upgrades, set previousSubscriptionId
-    if (order.orderType === "SUBSCRIPTION_UPGRADE" && order.upgradeFromSubscriptionId) {
-      subscriptionData.previousSubscriptionId = order.upgradeFromSubscriptionId;
-    }
-
-    [subscription] = await subscriptionModel.create([subscriptionData]);
+  // Type-specific metadata
+  if (orderType === "SUBSCRIPTION_UPGRADE" && order.upgradeFromSubscriptionId) {
+    baseData.previousSubscriptionId = order.upgradeFromSubscriptionId;
+  }
+  if (orderType === "SUBSCRIPTION_REACTIVATE") {
+    baseData.reactivatedFromOrderId = order._id;
   }
 
-  // Link order → subscription
+  return baseData;
+}
+
+/* =========================
+   HELPER: Link order and update company
+========================= */
+async function linkOrderAndUpdateCompany(order, subscription, plan) {
   await orderModel.updateOne(
     { _id: order._id },
     { $set: { subscriptionId: subscription._id } }
   );
 
-  // Build selectedAddons map from subscription addonSnapshot
   const selectedAddonsMap = {};
   (subscription.addonSnapshot || []).forEach(a => {
     if (a && a.value) selectedAddonsMap[a.value] = (selectedAddonsMap[a.value] || 0) + (a.qty || 1);
   });
 
-  // Compute effective user limits = plan.userPricing + sum(addon.provides * qty)
   const effectiveLimits = { ...(plan.userPricing || {}) };
   (subscription.addonSnapshot || []).forEach((a) => {
     if (a && a.provides && typeof a.provides === 'object') {
@@ -323,7 +272,6 @@ async function activateSubscriptionIfEligible(order) {
     }
   });
 
-  // Update company
   await Company.updateOne(
     { _id: order.companyId },
     {
@@ -336,9 +284,166 @@ async function activateSubscriptionIfEligible(order) {
         selectedAddons: selectedAddonsMap,
         effectiveUserLimits: effectiveLimits,
       }
-    },
-    {  }
+    }
   );
+}
+
+/* =========================
+   HANDLER: SUBSCRIPTION_PURCHASE
+========================= */
+async function activateSubscriptionPurchase(order, plan, planItem, addonSnapshots) {
+  const now = Date.now();
+  const startAt = order.meta?.intendedStartAt || now;
+  const expiryDate = calculateSubscriptionExpiry(plan, startAt);
+
+  // Check for existing expired subscription to reactivate
+  const existingExpiredSubscription = await subscriptionModel.findOne({
+    companyId: order.companyId,
+    status: 'EXPIRED'
+  }).sort({ createdAt: -1 });
+
+  let subscription;
+  const subscriptionData = buildSubscriptionData(plan, planItem, addonSnapshots, order, startAt, expiryDate, "SUBSCRIPTION_PURCHASE");
+
+  if (existingExpiredSubscription) {
+    // Reactivate existing expired subscription
+    subscription = await subscriptionModel.findByIdAndUpdate(
+      existingExpiredSubscription._id,
+      { $set: { ...subscriptionData, updatedAt: now } },
+      { new: true }
+    );
+  } else {
+    // Create new subscription
+    [subscription] = await subscriptionModel.create([subscriptionData]);
+  }
+
+  return subscription;
+}
+
+/* =========================
+   HANDLER: SUBSCRIPTION_RENEWAL
+========================= */
+async function activateSubscriptionRenewal(order, plan, planItem, addonSnapshots) {
+  const now = Date.now();
+  const startAt = order.meta?.intendedStartAt || now;
+  const expiryDate = calculateSubscriptionExpiry(plan, startAt);
+
+  // Renewal: extend existing subscription dates
+  const subscription = await subscriptionModel.findByIdAndUpdate(
+    order.meta?.reactivateFromSubscriptionId,
+    {
+      $set: {
+        startAt,
+        endAt: expiryDate,
+        graceEndAt: expiryDate + (7 * DAY_MS),
+        lastCheckedAt: now,
+        activatedByOrderId: order._id,
+        updatedAt: now
+      }
+    },
+    { new: true }
+  );
+
+  if (!subscription) throw new Error("Subscription not found for renewal");
+  return subscription;
+}
+
+/* =========================
+   HANDLER: SUBSCRIPTION_REACTIVATE
+========================= */
+async function activateSubscriptionReactivate(order, plan, planItem, addonSnapshots, carriedAddons) {
+  const now = Date.now();
+  const startAt = order.meta?.intendedStartAt || now;
+  const expiryDate = calculateSubscriptionExpiry(plan, startAt);
+
+  // Use new addons if provided, else carry old ones
+  const finalAddons = addonSnapshots.length ? addonSnapshots : carriedAddons;
+
+  const subscription = await subscriptionModel.findByIdAndUpdate(
+    order.meta?.reactivateFromSubscriptionId,
+    {
+      $set: {
+        status: "ACTIVE",
+        lifecycle: "ACTIVE",
+        startAt,
+        endAt: expiryDate,
+        addonSnapshot: finalAddons,
+        addonPricePaise: finalAddons.reduce((s, a) => s + a.pricePaise * a.qty, 0),
+        graceEndAt: expiryDate + (7 * DAY_MS),
+        lastCheckedAt: now,
+        reactivatedFromOrderId: order._id,
+        activatedByOrderId: order._id,
+        updatedAt: now
+      }
+    },
+    { new: true }
+  );
+
+  if (!subscription) throw new Error("Subscription not found for reactivation");
+  return subscription;
+}
+
+/* =========================
+   HANDLER: SUBSCRIPTION_UPGRADE
+========================= */
+async function activateSubscriptionUpgrade(order, plan, planItem, addonSnapshots) {
+  const now = Date.now();
+  const startAt = order.meta?.intendedStartAt || now;
+  const expiryDate = calculateSubscriptionExpiry(plan, startAt);
+
+  // Cancel old subscription
+  const oldSub = await subscriptionModel.findById(order.upgradeFromSubscriptionId);
+  if (!oldSub || oldSub.status !== "ACTIVE") {
+    throw new Error("Invalid upgrade source subscription");
+  }
+  oldSub.status = "CANCELLED";
+  oldSub.endAt = now - 1;
+  await oldSub.save();
+
+  // Create new subscription
+  const subscriptionData = buildSubscriptionData(plan, planItem, addonSnapshots, order, startAt, expiryDate, "SUBSCRIPTION_UPGRADE");
+  const [subscription] = await subscriptionModel.create([subscriptionData]);
+
+  return subscription;
+}
+
+/* =========================
+   MAIN DISPATCHER
+========================= */
+async function activateSubscriptionIfEligible(order) {
+  if (order.status !== "paid") return null;
+  if (order.subscriptionId) return null;
+
+  const { plan, planItem } = await validateAndResolvePlan(order);
+  const addonSnapshots = await collectOrderAddons(order);
+  const carriedAddons = await getCarriedAddons(order, order.orderType);
+  const finalAddons = addonSnapshots.length ? addonSnapshots : carriedAddons;
+
+  let subscription;
+
+  switch (order.orderType) {
+    case "SUBSCRIPTION_PURCHASE":
+      subscription = await activateSubscriptionPurchase(order, plan, planItem, finalAddons);
+      break;
+
+    case "SUBSCRIPTION_RENEWAL":
+      subscription = await activateSubscriptionRenewal(order, plan, planItem, finalAddons);
+      break;
+
+    case "SUBSCRIPTION_REACTIVATE":
+      subscription = await activateSubscriptionReactivate(order, plan, planItem, finalAddons, carriedAddons);
+      break;
+
+    case "SUBSCRIPTION_UPGRADE":
+      subscription = await activateSubscriptionUpgrade(order, plan, planItem, finalAddons);
+      break;
+
+    default:
+      throw new Error(`Unknown order type: ${order.orderType}`);
+  }
+
+  // Link order and update company
+  await linkOrderAndUpdateCompany(order, subscription, plan);
 
   return subscription;
 }
@@ -617,7 +722,6 @@ class CompanyService {
   /* =========================
      TAX
   ========================= */
-  const taxPercent = 18;
   // Compute tax respecting taxIncluded flag per item
   // Items with taxIncluded=true already have tax baked into their price.
   // We calculate the included portion for display but DO NOT add it again on top of subtotal.
@@ -627,7 +731,7 @@ class CompanyService {
   for (const it of items) {
     if (!it.taxConfig?.hasTax) continue;
     if (it.taxConfig?.taxIncluded) {
-      const taxPart = Math.round((it.lineSubtotalPaise * taxPercent) / (100+taxPercent));
+      const taxPart = Math.round((it.lineSubtotalPaise * TAX_PERCENT) / (100 + TAX_PERCENT));
       taxFromIncludedPaise += taxPart; // for display only
     } else {
       taxBaseExcludedPaise += it.lineSubtotalPaise;
@@ -638,7 +742,7 @@ class CompanyService {
   const discountConsumedOnExcluded = Math.min(totalDiscountPaise, taxBaseExcludedPaise);
   const remainingExcludedBase = Math.max(0, taxBaseExcludedPaise - discountConsumedOnExcluded);
 
-  const taxOnExcludedPaise = Math.round(remainingExcludedBase * (taxPercent / 100));
+  const taxOnExcludedPaise = Math.round(remainingExcludedBase * (TAX_PERCENT / 100));
 
   // For display, total tax = included portion + added portion. But payable only adds taxOnExcludedPaise.
   const totalTaxPaiseForDisplay = taxFromIncludedPaise + taxOnExcludedPaise;
@@ -704,8 +808,8 @@ class CompanyService {
     // payments are recorded in Payment collection; link via paymentIds after creation
     taxBreakdown: totalTaxPaiseForDisplay
       ? [{
-          taxName: planDoc.taxName || plan.taxName || "GST",
-          percentage: taxPercent,
+          taxName: planDoc.taxName || TAX_NAME || "GST",
+          percentage: TAX_PERCENT,
           taxAmountPaise: totalTaxPaiseForDisplay
         }]
       : [],
@@ -1167,12 +1271,12 @@ class CompanyService {
       const now = Date.now();
 
       // Validate subscription
-      const subscription = await subscriptionModel.findById(subscriptionId);
+      const subscription = await subscriptionModel.findById(subscriptionId).lean();
       if (!subscription) throw new Error("Subscription not found");
       if (subscription.status !== "ACTIVE") throw new Error("Only ACTIVE subscriptions can be upgraded");
 
       // Validate plans
-      const oldPlan = subscription.planSnapshot && Object.keys(subscription.planSnapshot || {}).length ? subscription.planSnapshot : (await loadCompanyPlanSnapshot(subscription.companyId)) || await planModel.findById(subscription.planId);
+      const oldPlan = subscription.planSnapshot && Object.keys(subscription.planSnapshot || {}).length ? subscription.planSnapshot : (await loadCompanyPlanSnapshot(subscription.companyId)) || await planModel.findById(subscription.planId).lean();
       const newPlan = newPlanId//await planModel.findById(newPlanId);
 
       if (!newPlan) throw new Error("New plan not found");
@@ -1249,16 +1353,15 @@ class CompanyService {
       }
 
       // Tax calculation respecting taxIncluded on new plan
-      const taxPercent = 18;
       let taxFromIncluded = 0;
       let taxOnExcluded = 0;
       const subtotalAfterDiscount = Math.max(0, subtotal - totalDiscount);
 
       if (newPlan.hasTax && newPlan.taxIncluded) {
-        taxFromIncluded = Math.round((subtotal * taxPercent) / (100 + taxPercent));
+        taxFromIncluded = Math.round((subtotal * TAX_PERCENT) / (100 + TAX_PERCENT));
         taxOnExcluded = 0;
       } else if (newPlan.hasTax) {
-        taxOnExcluded = Math.round(subtotalAfterDiscount * (taxPercent / 100));
+        taxOnExcluded = Math.round(subtotalAfterDiscount * (TAX_PERCENT / 100));
       }
 
       const totalTax = newPlan.hasTax ? taxFromIncluded + taxOnExcluded : 0;
@@ -1324,8 +1427,8 @@ class CompanyService {
         // payments will be recorded in Payment collection and linked after creation
         taxBreakdown: totalTax
           ? [{
-            taxName: newPlan.taxName || "GST",
-            percentage: 18,
+            taxName: newPlan.taxName || TAX_NAME,
+            percentage: TAX_PERCENT,
             taxAmountPaise: totalTax,
           }]
           : [],
@@ -1516,14 +1619,14 @@ class CompanyService {
       const now = Date.now();
 
       // Validate subscription
-      const subscription = await subscriptionModel.findById(subscriptionId);
+      const subscription = await subscriptionModel.findById(subscriptionId).lean();
       if (!subscription) throw new Error("Subscription not found");
       if (subscription.status !== "ACTIVE") throw new Error("Only ACTIVE subscriptions can be upgraded");
 
       // Validate plans
       const oldPlan = subscription.planSnapshot && Object.keys(subscription.planSnapshot || {}).length
         ? subscription.planSnapshot
-        : (await loadCompanyPlanSnapshot(subscription.companyId)) || await planModel.findById(subscription.planId);
+        : (await loadCompanyPlanSnapshot(subscription.companyId)) || await planModel.findById(subscription.planId).lean();
       const newPlan = await planModel.findById(newPlanId);
 
       if (!newPlan) throw new Error("New plan not found");
@@ -1650,7 +1753,6 @@ class CompanyService {
 
     // Tax handling: respect addon-level taxIncluded flag. We'll compute included tax (for display)
     // and tax to add (exclusive) separately. Only exclusive tax is added to payable amount.
-    const taxPercent = 18;
     let includedTaxPaise = 0;
     let exclusiveTaxBase = 0;
     const taxableTotal = items.filter(it => it.taxConfig?.hasTax).reduce((s,it)=>s+it.lineSubtotalPaise,0);
@@ -1667,13 +1769,13 @@ class CompanyService {
 
     // included tax portion (for display only)
     if (taxableIncludedAfterDiscount > 0) {
-      includedTaxPaise = Math.round(taxableIncludedAfterDiscount * (taxPercent / (100 + taxPercent)));
+      includedTaxPaise = Math.round(taxableIncludedAfterDiscount * (TAX_PERCENT / (100 + TAX_PERCENT)));
     }
 
     // tax to add on exclusive-tax items
     let exclusiveTaxPaise = 0;
     if (taxableExclusiveAfterDiscount > 0) {
-      exclusiveTaxPaise = Math.round(taxableExclusiveAfterDiscount * (taxPercent / 100));
+      exclusiveTaxPaise = Math.round(taxableExclusiveAfterDiscount * (TAX_PERCENT / 100));
     }
 
     const totalTaxPaise = includedTaxPaise + exclusiveTaxPaise;
@@ -1732,10 +1834,10 @@ class CompanyService {
     // Build taxBreakdown for the order (include both included and to-add taxes)
     const taxBreakdown = [];
     if (includedTaxPaise > 0) {
-      taxBreakdown.push({ taxName: 'GST', percentage: taxPercent, taxAmountPaise: includedTaxPaise, included: true });
+      taxBreakdown.push({ taxName: TAX_NAME, percentage: TAX_PERCENT, taxAmountPaise: includedTaxPaise, included: true });
     }
     if (exclusiveTaxPaise > 0) {
-      taxBreakdown.push({ taxName: 'GST', percentage: taxPercent, taxAmountPaise: exclusiveTaxPaise, included: false });
+      taxBreakdown.push({ taxName: TAX_NAME, percentage: TAX_PERCENT, taxAmountPaise: exclusiveTaxPaise, included: false });
     }
     if (taxBreakdown.length) {
       order.taxBreakdown = taxBreakdown;
@@ -1907,13 +2009,13 @@ class CompanyService {
     try {
       const now = Date.now();
 
-      const subscription = await subscriptionModel.findById(subscriptionId);
+      const subscription = await subscriptionModel.findById(subscriptionId).lean();
       if (!subscription) throw new Error("Subscription not found");
 
       // Prefer the subscription's stored snapshot for plan details; fallback to canonical plan doc
       const plan = subscription.planSnapshot && Object.keys(subscription.planSnapshot || {}).length
         ? subscription.planSnapshot
-        : (await loadCompanyPlanSnapshot(subscription.companyId)) || await planModel.findById(subscription.planId);
+        : (await loadCompanyPlanSnapshot(subscription.companyId)) || await planModel.findById(subscription.planId).lean();
       const company = await Company.findById(subscription.companyId);
 
       if (!plan || !company) throw new Error("Plan or company not found");
@@ -1948,12 +2050,12 @@ class CompanyService {
       const items = [
         {
           type: "plan",
-          itemId: plan._id,
+          itemId: plan.planId,
           name: plan.name,
           qty: 1,
           priceAtPurchasePaise: plan.pricePaise,
           lineSubtotalPaise: plan.pricePaise,
-          taxConfig: { hasTax: plan.hasTax }
+          taxConfig: { hasTax: plan.taxConfig.hasTax || false, taxIncluded: !!plan.taxConfig.taxIncluded }
         },
         ...carriedAddons.map(a => ({
           type: "addon",
@@ -1963,7 +2065,7 @@ class CompanyService {
           qty: a.qty,
           priceAtPurchasePaise: a.pricePaise,
           lineSubtotalPaise: a.pricePaise * a.qty,
-          taxConfig: { hasTax: a.hasTax }
+          taxConfig: { hasTax: a.hasTax || false, taxIncluded: !!a.taxIncluded }
         }))
       ];
 
@@ -1995,37 +2097,50 @@ class CompanyService {
         }
       }
 
-      const totalDiscount = discounts.reduce((s, d) => s + d.discountAppliedPaise, 0);
+      const totalDiscountPaise = discounts.reduce((s, d) => s + d.discountAppliedPaise, 0);
 
-      // Tax calculation
-      let taxableAmount = 0;
-      for (const item of items) {
-        if (item.taxConfig?.hasTax) {
-          taxableAmount += item.lineSubtotalPaise;
+      // Tax calculation — respecting taxIncluded flag per item (aligned with signupOrUpdateCompany)
+      let taxFromIncludedPaise = 0;
+      let taxBaseExcludedPaise = 0; // base amounts which require tax on top
+
+      for (const it of items) {
+        if (!it.taxConfig?.hasTax) continue;
+        if (it.taxConfig?.taxIncluded) {
+          const taxPart = Math.round((it.lineSubtotalPaise * TAX_PERCENT) / (100 + TAX_PERCENT));
+          taxFromIncludedPaise += taxPart; // for display only
+        } else {
+          taxBaseExcludedPaise += it.lineSubtotalPaise;
         }
       }
-      taxableAmount = Math.max(0, taxableAmount - totalDiscount);
 
-      const totalTax = plan.hasTax ? Math.round(taxableAmount * 0.18) : 0;
-      const totalPayable = subtotal - totalDiscount + totalTax;
+      // Allocate discount to excluded base first (reduces taxable base)
+      const discountConsumedOnExcluded = Math.min(totalDiscountPaise, taxBaseExcludedPaise);
+      const remainingExcludedBase = Math.max(0, taxBaseExcludedPaise - discountConsumedOnExcluded);
+
+      const taxOnExcludedPaise = Math.round(remainingExcludedBase * (TAX_PERCENT / 100));
+
+      // For display, total tax = included portion + added portion. But payable only adds taxOnExcludedPaise.
+      const totalTaxPaiseForDisplay = taxFromIncludedPaise + taxOnExcludedPaise;
+
+      const totalPayablePaise = Math.max(0, subtotal - totalDiscountPaise + taxOnExcludedPaise);
 
       // Wallet handling
-      let walletApplied = 0;
-      let wallet = null;
+      let walletDoc = null;
+      let walletAppliedPaise = 0;
 
-      if (useWallet === true && totalPayable > 0) {
-        wallet = await walletModel.findOne({ companyId: company._id });
-        if (!wallet) {
-          wallet = await walletModel.create({ companyId: company._id, balancePaise: 0 });
+      if (useWallet === true && totalPayablePaise > 0) {
+        walletDoc = await walletModel.findOne({ companyId: company._id });
+        if (!walletDoc) {
+          walletDoc = await walletModel.create({ companyId: company._id, balancePaise: 0 });
         }
-        walletApplied = Math.min(wallet.balancePaise, totalPayable);
+        walletAppliedPaise = Math.min(walletDoc.balancePaise, totalPayablePaise);
       }
 
-      const amountDue = Math.max(0, totalPayable - walletApplied);
+      const amountDuePaise = Math.max(0, totalPayablePaise - walletAppliedPaise);
 
       let orderStatus = "pending";
-      if (walletApplied > 0 && amountDue > 0) orderStatus = "partially_paid";
-      if (amountDue === 0) orderStatus = "paid";
+      if (walletAppliedPaise > 0 && amountDuePaise > 0) orderStatus = "partially_paid";
+      if (amountDuePaise === 0) orderStatus = "paid";
 
       // Create order
       const order = await orderModel.create({
@@ -2034,27 +2149,29 @@ class CompanyService {
         items,
         discounts,
         walletUsed: {
-          walletId: wallet?._id || null,
-          amountPaise: walletApplied
+          walletId: walletDoc?._id || null,
+          amountPaise: walletAppliedPaise
         },
         // payments are stored separately in Payment collection and linked via paymentIds
-        taxBreakdown: plan.hasTax
+        taxBreakdown: totalTaxPaiseForDisplay
           ? [{
-            taxName: plan.taxName || "GST",
-            percentage: 18,
-            taxAmountPaise: totalTax
+            taxName: plan.taxName || TAX_NAME,
+            percentage: TAX_PERCENT,
+            taxAmountPaise: totalTaxPaiseForDisplay
           }]
           : [],
         totals: {
           subtotalPaise: subtotal,
-          totalDiscountPaise: totalDiscount,
-          taxableAmountPaise: taxableAmount,
-          totalTaxPaise: totalTax,
-          totalPayablePaise: totalPayable
+          totalDiscountPaise: totalDiscountPaise,
+          taxableAmountPaise: remainingExcludedBase,
+          totalTaxPaise: totalTaxPaiseForDisplay,
+          includedTaxPaise: taxFromIncludedPaise,
+          excludedTaxPaise: taxOnExcludedPaise,
+          totalPayablePaise: totalPayablePaise
         },
         final: {
-          totalPaidPaise: walletApplied,
-          amountDuePaise: amountDue,
+          totalPaidPaise: walletAppliedPaise,
+          amountDuePaise: amountDuePaise,
           refundedAmountPaise: 0
         },
         status: orderStatus,
@@ -2065,31 +2182,51 @@ class CompanyService {
         createdBy,
       });
 
-      // Activate subscription if fully paid
+      // Activate subscription if fully paid (skip renewal — worker handles it at intendedStartAt)
       let newSubscription = null;
-      if (orderStatus === "paid") {
+      if (orderStatus === "paid" && orderType !== "SUBSCRIPTION_RENEWAL") {
         newSubscription = await activateSubscriptionIfEligible(order);
       }
 
       // Deduct wallet
-      if (walletApplied > 0) {
-        wallet.balancePaise -= walletApplied;
-        await wallet.save();
+      if (walletAppliedPaise > 0) {
+        walletDoc.balancePaise -= walletAppliedPaise;
+        await walletDoc.save();
 
         await transactionModel.create({
           companyId: company._id,
           orderId: order._id,
           type: "WALLET_DEBIT",
-          amountPaise: walletApplied,
+          amountPaise: walletAppliedPaise,
           source: "WALLET",
           description: `Wallet debit for ${orderType} order ${order._id}`,
           createdBy,
         });
         // create payment record for wallet usage and link to order
-        const wp = await paymentModel.create({ order: order._id, company: company._id, amountPaise: walletApplied, method: 'WALLET', status: 'SUCCESS', transactionId: 'WALLET', createdBy });
+        const wp = await paymentModel.create({ order: order._id, company: company._id, amountPaise: walletAppliedPaise, method: 'WALLET', status: 'SUCCESS', transactionId: 'WALLET', createdBy });
         order.paymentIds = order.paymentIds || [];
         order.paymentIds.push(wp._id);
         await order.save();
+      }
+
+      // If there is an unpaid remainder assume an offline/direct payment and mark order paid
+      if (amountDuePaise > 0) {
+        // create transaction record (use allowed enums: CASH_PAYMENT / CASH)
+        await transactionModel.create({ companyId: company._id, orderId: order._id, type: 'CASH_PAYMENT', amountPaise: amountDuePaise, source: 'CASH', description: `Offline payment for reactivation order ${order._id}`, createdBy });
+        // create a Payment document marked SUCCESS
+        const offlinePayment = await paymentModel.create({ order: order._id, company: company._id, amountPaise: amountDuePaise, method: 'OFFLINE', status: 'SUCCESS', transactionId: 'OFFLINE', createdBy });
+        order.paymentIds = order.paymentIds || [];
+        order.paymentIds.push(offlinePayment._id);
+        order.final = order.final || { totalPaidPaise: 0, amountDuePaise };
+        order.final.totalPaidPaise = (order.final.totalPaidPaise || 0) + amountDuePaise;
+        order.final.amountDuePaise = 0;
+        order.status = 'paid';
+        await order.save();
+
+        // Now activate subscription since fully paid (skip renewal — worker handles it at intendedStartAt)
+        if (!newSubscription && orderType !== "SUBSCRIPTION_RENEWAL") {
+          newSubscription = await activateSubscriptionIfEligible(order);
+        }
       }
 
       // Update company status based on order payment status
@@ -2111,7 +2248,7 @@ class CompanyService {
         orderId: order._id,
         order,
         newSubscription: newSubscription || null,
-        amountDuePaise: amountDue,
+        amountDuePaise: amountDuePaise,
       };
     } catch (err) {
       console.error("Error reactivating subscription:", err);

@@ -8,7 +8,6 @@ const {
 // Subscription module tracks a company’s current subscription.
 const SubscriptionSchema = new Schema(
   {
-  
     planId: { type: Schema.Types.ObjectId, ref: "Plan", required: true },
     planSnapshot: {
       planId: Schema.Types.ObjectId,
@@ -29,6 +28,13 @@ const SubscriptionSchema = new Schema(
         value: String,
         qty: { type: Number, default: 1 },
         pricePaise: Number,
+        hasTax: { type: Boolean, default: false },
+        taxIncluded: { type: Boolean, default: false },
+        provides: Schema.Types.Mixed,
+        type: { type: String, default: "limit" },
+        durationDays: Number,
+        startAt: Number,
+        endAt: Number,
       },
     ],
     startAt: { type: Number, required: true },
@@ -41,14 +47,17 @@ const SubscriptionSchema = new Schema(
     createdBy: { type: Schema.Types.ObjectId, ref: "UserAuth" },
     updatedBy: { type: Schema.Types.ObjectId, ref: "UserAuth" },
     // UPDATED
-      companyId: {
+    companyId: {
       type: Schema.Types.ObjectId,
       ref: "Company",
       required: true,
       index: true,
-    }, 
+    },
     // ADDED
-    previousSubscriptionId: { type: Schema.Types.ObjectId, ref: "Subscription" },
+    previousSubscriptionId: {
+      type: Schema.Types.ObjectId,
+      ref: "Subscription",
+    },
     planPricePaise: Number,
     addonPricePaise: Number,
     totalContractValuePaise: Number,
@@ -66,18 +75,39 @@ const SubscriptionSchema = new Schema(
     // Scheduled plan change (downgrade or change) to be applied at next billing
     scheduledChange: {
       effectiveAt: Number,
-      requestedBy: { type: Schema.Types.ObjectId, ref: 'UserAuth' },
-      createdAt: { type: Number, default: Date.now }
+      requestedBy: { type: Schema.Types.ObjectId, ref: "UserAuth" },
+      createdAt: { type: Number, default: Date.now },
     },
 
+    // Grace lifecycle
+    graceDays: { type: Number, default: 7 }, // company override possible
+    graceStartAt: { type: Number }, // when moved from ACTIVE → GRACE
+    graceEndAt: { type: Number }, // endAt + graceDays
+
+    expiredAt: { type: Number }, // when moved to EXPIRED
+
+    // Fast checks without recompute
+    lastCheckedAt: { type: Number }, // worker bookkeeping
+
+    // Reactivation tracking
+    reactivatedFromOrderId: { type: Schema.Types.ObjectId, ref: "Order" },
+
+    // Helpful flags for workers / reminders
+    lifecycle: {
+      type: String,
+      enum: ["ACTIVE", "GRACE", "EXPIRED"],
+      default: "ACTIVE",
+    },
     // NOT NEEDED
     // scheduledDowngradeTo: { type: Schema.Types.ObjectId, ref: 'Plan' },
     // paymentIds: [{ type: Schema.Types.ObjectId, ref: "Payment" }],
     // billingCycle: { type: String, enum: ["ONETIME", "DAILY","TRIAL", "WEEKLY", "MONTHLY", "YEARLY"], default: BillingCycle.MONTHLY },NOT NEEDED
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 SubscriptionSchema.index({ companyId: 1, status: 1 });
 SubscriptionSchema.index({ companyId: 1, endAt: 1 });
+SubscriptionSchema.index({ status: 1, endAt: 1 });
+SubscriptionSchema.index({ status: 1, graceEndAt: 1 });
 module.exports = mongoose.model("Subscription", SubscriptionSchema);
