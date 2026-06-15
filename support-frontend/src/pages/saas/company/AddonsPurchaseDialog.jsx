@@ -39,29 +39,45 @@ export default function AddonsPurchaseDialog({ open, onClose, companyId, onSucce
     (async () => {
       try {
         const res = await api.get("/saas/addons");
-        setAddons(res.data?.addons || res.data || []);
-      } catch (e) {
+        const fetchedAddons = res.data?.addons || res.data || [];
+        setAddons(fetchedAddons);
+        const defaultSelected = {};
+        fetchedAddons.forEach((a) => {
+          defaultSelected[a.value] = 0;
+        });
+        setSelected(defaultSelected);
+      } catch {
         setAddons([]);
+        setSelected({});
       }
 
       try {
         const w = await api.get(`/saas/wallet/${companyId}`);
         setWalletBalance((w?.wallet?.balancePaise || 0) / 100);
-      } catch (e) {
+      } catch {
         setWalletBalance(0);
       }
     })();
   }, [open, companyId]);
 
-  const changeQty = (value, qty) => {
+  const changeQty = (value, qty, addonType) => {
+    if (addonType === "feature") return;
     const q = Math.max(0, Number(qty || 0));
     setSelected((s) => ({ ...s, [value]: q }));
+  };
+
+  const toggleFeature = (value) => {
+    setSelected((s) => ({ ...s, [value]: s[value] === 1 ? 0 : 1 }));
+  };
+
+  const getQty = (addon) => {
+    return selected[addon.value] ?? 0;
   };
 
   const buildItems = () => {
     const items = [];
     addons.forEach((a) => {
-      const qty = selected[a.value] || 0;
+      const qty = getQty(a);
       if (qty > 0) items.push({ addonId: a._id, qty, addon: a });
     });
     return items;
@@ -70,7 +86,7 @@ export default function AddonsPurchaseDialog({ open, onClose, companyId, onSucce
   const calculateSubtotalPaise = () => {
     let total = 0;
     addons.forEach((a) => {
-      const qty = selected[a.value] || 0;
+      const qty = getQty(a);
       total += (a.pricePaise || 0) * qty;
     });
     return total;
@@ -98,7 +114,7 @@ export default function AddonsPurchaseDialog({ open, onClose, companyId, onSucce
     let taxIncluded = 0;
     let taxExcludedBase = 0;
     addons.forEach((a) => {
-      const qty = selected[a.value] || 0;
+      const qty = getQty(a);
       if (!qty) return;
       const linePaise = (a.pricePaise || 0) * qty;
       if (a.hasTax) {
@@ -163,7 +179,7 @@ export default function AddonsPurchaseDialog({ open, onClose, companyId, onSucce
       try {
         const w = await api.get(`/saas/wallet/${companyId}`);
         setWalletBalance((w?.wallet?.balancePaise || 0) / 100);
-      } catch (e) {
+      } catch {
         // ignore
       }
       setWalletDialogOpen(false);
@@ -178,17 +194,44 @@ export default function AddonsPurchaseDialog({ open, onClose, companyId, onSucce
       <DialogTitle>Purchase Add-ons</DialogTitle>
       <DialogContent>
         <Box sx={{ mt: 1 }}>
+          {alert && (
+            <Alert severity={alert.type} onClose={() => setAlert(null)} sx={{ mb: 2 }}>
+              {alert.message}
+            </Alert>
+          )}
           <Grid container spacing={2}>
             {addons.map((a) => (
               <Grid item xs={12} sm={6} key={a._id}>
                 <Box sx={{ border: "1px solid #eee", p: 1, borderRadius: 1 }}>
                   <Typography variant="subtitle2">{a.name}</Typography>
                   <Typography variant="body2">₹{((a.pricePaise || 0) / 100).toFixed(2)}</Typography>
-                  <Box display="flex" gap={1} alignItems="center" sx={{ mt: 1 }}>
-                    <Button size="small" onClick={() => changeQty(a.value, (selected[a.value] || 0) - 1)}>-</Button>
-                    <TextField size="small" value={selected[a.value] || 0} onChange={(e) => changeQty(a.value, e.target.value)} sx={{ width: 64 }} />
-                    <Button size="small" onClick={() => changeQty(a.value, (selected[a.value] || 0) + 1)}>+</Button>
-                  </Box>
+                  {a.type === 'feature' ? (
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          checked={getQty(a) === 1}
+                          onChange={() => toggleFeature(a.value)}
+                          color="primary"
+                        />
+                      }
+                      label="Select this feature add-on"
+                      sx={{ mt: 1 }}
+                    />
+                  ) : (
+                    <Box display="flex" gap={1} alignItems="center" sx={{ mt: 1 }}>
+                      <Button size="small" disabled={getQty(a) <= 0} onClick={() => changeQty(a.value, getQty(a) - 1, a.type)}>-</Button>
+                      <TextField
+                        size="small"
+                        value={getQty(a)}
+                        onChange={(e) => changeQty(a.value, e.target.value, a.type)}
+                        sx={{ width: 64 }}
+                      />
+                      <Button size="small" onClick={() => changeQty(a.value, getQty(a) + 1, a.type)}>+</Button>
+                    </Box>
+                  )}
+                  {a.type === 'feature' && (
+                    <Typography variant="caption" color="textSecondary">Select 0 or 1 only</Typography>
+                  )}
                 </Box>
               </Grid>
             ))}

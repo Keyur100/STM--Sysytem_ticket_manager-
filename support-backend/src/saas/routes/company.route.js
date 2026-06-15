@@ -83,36 +83,36 @@ router.post(
 );
 
 // Convenience: explicit endpoints for step1..step5 (optional)
-router.post(
-  "/:companyId/provision/step1",
-  authJwt,
-  rbac("company_update"),
-  tryCatch(async (req, res) => syncController.syncStep({ ...req, params: { ...req.params, step: '1' } }, res))
-);
-router.post(
-  "/:companyId/provision/step2",
-  authJwt,
-  rbac("company_update"),
-  tryCatch(async (req, res) => syncController.syncStep({ ...req, params: { ...req.params, step: '2' } }, res))
-);
-router.post(
-  "/:companyId/provision/step3",
-  authJwt,
-  rbac("company_update"),
-  tryCatch(async (req, res) => syncController.syncStep({ ...req, params: { ...req.params, step: '3' } }, res))
-);
-router.post(
-  "/:companyId/provision/step4",
-  authJwt,
-  rbac("company_update"),
-  tryCatch(async (req, res) => syncController.syncStep({ ...req, params: { ...req.params, step: '4' } }, res))
-);
-router.post(
-  "/:companyId/provision/step5",
-  authJwt,
-  rbac("company_update"),
-  tryCatch(async (req, res) => syncController.syncStep({ ...req, params: { ...req.params, step: '5' } }, res))
-);
+// router.post(
+//   "/:companyId/provision/step1",
+//   authJwt,
+//   rbac("company_update"),
+//   tryCatch(async (req, res) => syncController.syncStep({ ...req, params: { ...req.params, step: '1' } }, res))
+// );
+// router.post(
+//   "/:companyId/provision/step2",
+//   authJwt,
+//   rbac("company_update"),
+//   tryCatch(async (req, res) => syncController.syncStep({ ...req, params: { ...req.params, step: '2' } }, res))
+// );
+// router.post(
+//   "/:companyId/provision/step3",
+//   authJwt,
+//   rbac("company_update"),
+//   tryCatch(async (req, res) => syncController.syncStep({ ...req, params: { ...req.params, step: '3' } }, res))
+// );
+// router.post(
+//   "/:companyId/provision/step4",
+//   authJwt,
+//   rbac("company_update"),
+//   tryCatch(async (req, res) => syncController.syncStep({ ...req, params: { ...req.params, step: '4' } }, res))
+// );
+// router.post(
+//   "/:companyId/provision/step5",
+//   authJwt,
+//   rbac("company_update"),
+//   tryCatch(async (req, res) => syncController.syncStep({ ...req, params: { ...req.params, step: '5' } }, res))
+// );
 
 // Get sync logs for a company
 router.get(
@@ -232,6 +232,13 @@ router.get(
   rbac("company_read"),
   validation(companyValidator.list),
   tryCatch(companyController.list)
+);
+
+// List companies (lightweight - only _id and name)
+router.get(
+  "/names/list",
+  authJwt,
+  tryCatch(companyController.listNames)
 );
 
 // Delete all companies and related records

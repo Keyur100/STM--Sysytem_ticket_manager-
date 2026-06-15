@@ -251,6 +251,24 @@ export default function AddonsStep({ form, handleChange }) {
                     </Typography>
                   )}
 
+                  {/* Addon Type & Billing Badge */}
+                  <Box sx={{ display: "flex", gap: 0.5, mb: 1.5, flexWrap: "wrap" }}>
+                    <Chip
+                      icon={addon.type === "limit" ? "📊" : "🔓"}
+                      label={addon.type === "limit" ? "Limit" : "Feature"}
+                      size="small"
+                      variant="filled"
+                      color={addon.type === "limit" ? "default" : "primary"}
+                      sx={{ height: "24px" }}
+                    />
+                    <Chip
+                      label={addon.billingType === "recurring" ? "🔄 Recurring" : "🔔 One-time"}
+                      size="small"
+                      variant="outlined"
+                      sx={{ height: "24px" }}
+                    />
+                  </Box>
+
                   <Divider sx={{ my: 1.5 }} />
 
                   {/* Price and Tax Info */}

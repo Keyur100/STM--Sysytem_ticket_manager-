@@ -150,6 +150,7 @@ export default function CompanyPaymentStep({ form, subscription, onPaymentReady 
         code: appliedCode,
         planCode: plan.code,
         amountPaise: totalAmountPaise,
+        companyId: form._id,
       });
       if (res.data && res.data.success === false) {
         throw new Error(res.data.message || 'Coupon apply failed');

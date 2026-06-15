@@ -7,67 +7,91 @@ const addonData = [
     value: "max_employees",
     name: "Extra Employees",
     description: "Add additional employees to your plan",
+    type: "limit",
+    scope: "global",
+    provides: { limits: { "max_employees": 1 } },
+    billingType: "recurring",
+    expiryType: "duration",
+    durationDays: 30,
     pricePaise: 50000, // ₹500
     hasTax: true,
     taxIncluded: true,
     taxName: "GST",
     isSystem: true,
     isActive: true,
-    isDeleted: false,
-    type:"limit"
+    isDeleted: false
   },
   {
     value: "max_branch",
     name: "Extra Branch",
     description: "Add additional branch to your plan",
+    type: "limit",
+    scope: "global",
+    provides: { limits: { "max_branch": 1 } },
+    billingType: "recurring",
+    expiryType: "duration",
+    durationDays: 30,
     pricePaise: 50000, // ₹500
     hasTax: true,
     taxIncluded: true,
     taxName: "GST",
     isSystem: true,
     isActive: true,
-    isDeleted: false,
-    type:"limit"
+    isDeleted: false
   },
-
   {
     value: "max_customers",
     name: "Extra Customers",
     description: "Add additional customers to your plan",
+    type: "limit",
+    scope: "global",
+    provides: { limits: { "max_customers": 100 } },
+    billingType: "recurring",
+    expiryType: "duration",
+    durationDays: 30,
     pricePaise: 50000, // ₹500
     hasTax: true,
     taxIncluded: true,
     taxName: "GST",
     isSystem: true,
     isActive: true,
-    isDeleted: false,
-    type:"limit"
+    isDeleted: false
   },
   {
     value: "max_suppliers",
     name: "Extra Suppliers",
     description: "Add additional suppliers to your plan",
+    type: "limit",
+    scope: "global",
+    provides: { limits: { "max_suppliers": 100 } },
+    billingType: "recurring",
+    expiryType: "duration",
+    durationDays: 30,
     pricePaise: 50000, // ₹500
     hasTax: true,
     taxIncluded: true,
     taxName: "GST",
     isSystem: true,
     isActive: true,
-    isDeleted: false,
-    type:"limit"
+    isDeleted: false
   },
   {
     value: "storageMB",
     name: "Extra Storage 124MB",
     description: "Add storage to your account",
-    pricePaise: 30000, 
+    type: "limit",
+    scope: "global",
+    provides: { limits: { "storageMB": 124 } },
+    billingType: "recurring",
+    expiryType: "duration",
+    durationDays: 30,
+    pricePaise: 30000,
     hasTax: true,
     taxIncluded: true,
     taxName: "GST",
     isSystem: true,
     isActive: true,
-    isDeleted: false,
-    type:"limit"
+    isDeleted: false
   },
 ];
 

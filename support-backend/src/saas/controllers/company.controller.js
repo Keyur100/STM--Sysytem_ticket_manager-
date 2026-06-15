@@ -94,6 +94,20 @@ const list = async (req, res) => {
   }
 };
 
+/**
+ * Lightweight endpoint to list companies (only _id and name)
+ * Used for dropdowns and lightweight UI components
+ */
+const listNames = async (req, res) => {
+  try {
+    const result = await CompanyService.listCompanyNames();
+    return sendSuccess(res, result, "Company names fetched successfully");
+  } catch (err) {
+    console.error("Error in list company names:", err);
+    return sendError(res, 500, err.message || COMPANY_ERRORS.INTERNAL_SERVER_ERROR);
+  }
+};
+
 const suspend = async (req, res) => {
   try {
     const { companyId } = req.params;
@@ -412,6 +426,7 @@ module.exports = {
   get,
   update,
   list,
+  listNames,
   suspend,
   draft,
   getCompanyDetails,

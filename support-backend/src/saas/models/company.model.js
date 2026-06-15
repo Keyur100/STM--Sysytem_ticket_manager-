@@ -77,6 +77,8 @@ const CompanySchema = new Schema(
     clientId: { type: Schema.Types.ObjectId, ref: 'ClientUser', index: true, sparse: true },
     // Effective user limits computed from plan + active addons (e.g., { max_employees: 12, storageMB: 1024 })
     effectiveUserLimits: { type: Schema.Types.Mixed, default: {} },
+    // Effective permissions computed from plan + active addons (array of permission keys like "module.action")
+    effectivePermissions: { type: [String], default: [] },
     // Tax settings for company-level tax config
     taxSettings: {
       taxName: { type: String, default: 'GST' },

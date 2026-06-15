@@ -3,106 +3,55 @@ const express = require("express");
 const router = express.Router();
 const controller = require("../controllers/addon.controller.js");
 const authJwt = require("../../middlewares/authJwt");
-const rbac = require("../../middlewares/rbac");
 const tryCatch = require("../../middlewares/tryCatch");
 
-/**
- * Get all add-ons (public, but requires read permission)
- */
+// List all add-ons with pagination/search/sort
 router.get(
   "/",
   authJwt,
-  rbac("addon_read"),
-  tryCatch((req, res) => controller.getAll(req, res))
+  tryCatch(controller.getAll)
 );
 
-/**
- * Get specific add-on by ID
- */
+// List feature addons with company applied status
+router.get(
+  "/features/status",
+  authJwt,
+  tryCatch(controller.listFeatureWithCompanies)
+);
+
+// Get a specific add-on by ID
 router.get(
   "/:id",
   authJwt,
-  rbac("addon_read"),
-  tryCatch((req, res) => controller.getById(req, res))
+  tryCatch(controller.getById)
 );
 
-/**
- * Get add-ons applied to a company (from orders/subscriptions)
- */
-router.get(
-  "/company/:companyId",
-  authJwt,
-  rbac("saas.addon_view"),
-  tryCatch(async (req, res) => {
-    const { companyId } = req.params;
-    const Order = require("../models/order.model");
-    const Addon = require("../models/addon.model");
-    
-    try {
-      // Get all orders for company with addon items
-      const orders = await Order.find({ companyId }).lean();
-      const addonIds = new Set();
-      
-      orders.forEach(order => {
-        if (order.items) {
-          order.items.forEach(item => {
-            if (item.type === "addon" && item.itemId) {
-              addonIds.add(item.itemId.toString());
-            }
-          });
-        }
-      });
-      
-      if (addonIds.size === 0) {
-        return res.json({ addons: [], message: "No addons found for this company" });
-      }
-      
-      const addons = await Addon.find({ _id: { $in: Array.from(addonIds) } }).lean();
-      res.json({ addons });
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  })
-);
-
-/**
- * Create add-on (admin only)
- */
+// Create a new add-on (admin only)
 router.post(
   "/",
   authJwt,
-  rbac("addon_create"),
-  tryCatch((req, res) => controller.create?.(req, res))
+  tryCatch(controller.create)
 );
 
-/**
- * Update add-on
- */
+// Update an add-on (admin only)
 router.put(
   "/:id",
   authJwt,
-  rbac("addon_update"),
-  tryCatch((req, res) => controller.update?.(req, res))
+  tryCatch(controller.update)
 );
 
-/**
- * Delete add-on
- */
+// Delete an add-on (admin only)
 router.delete(
   "/:id",
   authJwt,
-  rbac("addon_delete"),
-  tryCatch((req, res) => controller.delete?.(req, res))
+  tryCatch(controller.delete)
 );
 
-/**
- * Buy add-on for a company
- */
+// Buy add-on for a company
 router.post(
   "/:companyId/buy",
   authJwt,
-  rbac("addon_buy"),
-  tryCatch((req, res) => controller.buyAddon(req, res))
+  tryCatch(controller.buyAddon)
 );
 
 module.exports = router;

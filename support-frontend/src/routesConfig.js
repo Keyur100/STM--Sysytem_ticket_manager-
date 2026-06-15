@@ -22,25 +22,25 @@ const routesConfig = [
   //   component: React.lazy(() => import("./pages/Dashboard")),
   //   permission: "dashboard.read",
   // },
-  {                                                                                                                                                                                                                    
-    label: "Users",
-    icon: PeopleIcon,
-    path: "/users",
-    permission: "user.read",
-    component: React.lazy(() => import("./pages/users/UsersList")),
-    routes: [
-      {
-        path: "new",
-        component: React.lazy(() => import("./pages/users/UserAddEdit/UserForm")),
-        permission: "user.create",
-      },
-      {
-        path: ":id/edit",
-        component: React.lazy(() => import("./pages/users/UserAddEdit/UserForm")),
-        permission: "user.update",
-      },
-    ],
-  },
+  // {                                                                                                                                                                                                                    
+  //   label: "Users",
+  //   icon: PeopleIcon,
+  //   path: "/users",
+  //   permission: "user.read",
+  //   component: React.lazy(() => import("./pages/users/UsersList")),
+  //   routes: [
+  //     {
+  //       path: "new",
+  //       component: React.lazy(() => import("./pages/users/UserAddEdit/UserForm")),
+  //       permission: "user.create",
+  //     },
+  //     {
+  //       path: ":id/edit",
+  //       component: React.lazy(() => import("./pages/users/UserAddEdit/UserForm")),
+  //       permission: "user.update",
+  //     },
+  //   ],
+  // },
   // {
   //   label: "Roles",
   //   icon: SettingsIcon,
@@ -225,6 +225,30 @@ const routesConfig = [
       path: ":id",
       component: React.lazy(() => import("./pages/saas/Coupon/CouponForm")), // You can change this to a View component if needed
       permission: "saas.coupon_read",
+    },
+  ],
+},
+{
+  label: "Addons",
+  icon: ExtensionIcon,
+  path: "/addons",
+  permission: "saas.addon_read",
+  component: React.lazy(() => import("./pages/saas/Addons/AddonList")),
+  routes: [
+    {
+      path: "new",
+      component: React.lazy(() => import("./pages/saas/Addons/AddonForm")),
+      permission: "saas.addon_create",
+    },
+    {
+      path: ":id/edit",
+      component: React.lazy(() => import("./pages/saas/Addons/AddonForm")),
+      permission: "saas.addon_update",
+    },
+    {
+      path: ":id",
+      component: React.lazy(() => import("./pages/saas/Addons/AddonForm")),
+      permission: "saas.addon_read",
     },
   ],
 },

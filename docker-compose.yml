@@ -56,44 +56,64 @@ services:
   mongo:
     image: mongo:7.0
     container_name: mongo
-    ports:
-      - "27018:27017"       # Host 27017 → Container 27018 (remove while push to docker hub)
+
     restart: unless-stopped
+
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+
     volumes:
       - mongo_data:/data/db
+
     networks:
       - app-network
 
   redis:
     image: redis:7-alpine
     container_name: redis
+
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"]
+
+    command:
+      - redis-server
+      - --appendonly
+      - yes
+
     volumes:
       - redis_data:/data
+
     networks:
       - app-network
 
   backend:
-    image: keyurp0207/support-backend:latest   # ✅ From Docker Hub
+    image: keyurp0207/support-backend:latest
     container_name: backend
+
     env_file:
-      - .env.production                        # ✅ Local file on server
+      - .env
+
     depends_on:
       - mongo
       - redis
+
     restart: unless-stopped
+
     networks:
       - app-network
 
   frontend:
-    image: keyurp0207/support-frontend:latest  # ✅ From Docker Hub
+    image: keyurp0207/support-frontend:latest
     container_name: frontend
+
     depends_on:
       - backend
+
     ports:
-      - "5173:80"                                # ✅ Production standard
+      - "5173:80"
+
     restart: unless-stopped
+
     networks:
       - app-network
 

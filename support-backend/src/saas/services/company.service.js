@@ -683,34 +683,22 @@ class CompanyService {
   let couponDoc = null;
 
   if (couponCode) {
-    const coupon = await couponModel.findOne({ code: couponCode, isActive: true });
-    const now = Date.now();
-
-    if (
-      coupon &&
-      (!coupon.validFrom || now >= coupon.validFrom) &&
-      (!coupon.validTo || now <= coupon.validTo) &&
-      (!coupon.minSpendPaise || subtotalPaise >= coupon.minSpendPaise) &&
-      (coupon.eligiblePlanCodes.length === 0 || coupon.eligiblePlanCodes.includes(planDoc.code)) &&
-      (coupon.maxUses === 0 || coupon.usedCount < coupon.maxUses)
-    ) {
-      let applied =
-        coupon.discountType === CouponType.PERCENT
-          ? Math.floor((subtotalPaise * coupon.discountValue) / 100)
-          : Number(coupon.discountValue || 0);
-
-      if (coupon.maxDiscountPaise)
-        applied = Math.min(applied, coupon.maxDiscountPaise);
+    try {
+      const applied = await CouponService.validateAndApply(couponCode, planDoc.code, subtotalPaise, companyId);
+      const coupon = applied.coupon;
 
       discounts.push({
         couponId: coupon._id,
         couponCode: coupon.code,
         discountType: coupon.discountType,
         discountValue: coupon.discountValue,
-        discountAppliedPaise: applied
+        discountAppliedPaise: applied.discountPaise
       });
 
-      couponDoc = coupon;//TODO COUPON USED COUNT INCREMENT LATER
+      couponDoc = coupon;
+    } catch (err) {
+      console.error("Coupon validation failed during signupOrUpdateCompany:", err);
+      throw new Error(`Coupon validation failed: ${err.message}`);
     }
   }
 
@@ -827,6 +815,9 @@ class CompanyService {
       totalPaidPaise: walletAppliedPaise,
       amountDuePaise,
       refundedAmountPaise: 0
+    },
+    meta: {
+      couponCode: couponDoc?.code || null
     },
     status: orderStatus
   });
@@ -1110,6 +1101,29 @@ class CompanyService {
       sortBy,
       sortOrder,
     };
+  }
+
+  /**
+   * Lightweight method to list company names and IDs only
+   * Used for dropdowns and UI components
+   */
+  static async listCompanyNames() {
+    try {
+      const companies = await Company.find(
+        { isDeleted: { $ne: true } },
+        { _id: 1, name: 1 }
+      )
+        .sort({ name: 1 })
+        .lean();
+
+      return {
+        companies: companies || [],
+        count: companies?.length || 0,
+      };
+    } catch (err) {
+      console.error("Error fetching company names:", err);
+      throw new Error(`Failed to fetch company names: ${err.message}`);
+    }
   }
 
   // Fetch company by ID for edit(some keys only)
@@ -1782,6 +1796,8 @@ class CompanyService {
 
     const totalPayablePaise = Math.max(0, discountedSubtotal + exclusiveTaxPaise);
 
+    const activeSubscription = await subscriptionModel.findOne({ companyId, status: 'ACTIVE' });
+
     // Wallet handling
     let walletApplied = 0;
     let walletDoc = null;
@@ -1809,6 +1825,7 @@ class CompanyService {
 
     const order = await orderModel.create({
       companyId,
+      subscriptionId: activeSubscription?._id,
       orderType: 'ADDON_PURCHASE',
       items,
       totals: totalsObj,
@@ -1844,23 +1861,11 @@ class CompanyService {
       await order.save();
     }
 
-    // If there is an unpaid remainder assume an offline/direct payment and mark order paid
-    if (amountDuePaise > 0) {
-      // create transaction record (use allowed enums: CASH_PAYMENT / CASH)
-      await transactionModel.create({ companyId, orderId: order._id, type: 'CASH_PAYMENT', amountPaise: amountDuePaise, source: 'CASH', description: `Offline payment for addons order ${order._id}`, createdBy });
-      // create a Payment document marked SUCCESS
-      const offlinePayment = await paymentModel.create({ order: order._id, company: companyId, amountPaise: amountDuePaise, method: 'OFFLINE', status: 'SUCCESS', transactionId: 'OFFLINE', createdBy });
-      order.paymentIds = order.paymentIds || [];
-      order.paymentIds.push(offlinePayment._id);
-      order.final = order.final || { totalPaidPaise: 0, amountDuePaise };
-      order.final.totalPaidPaise = (order.final.totalPaidPaise || 0) + amountDuePaise;
-      order.final.amountDuePaise = 0;
-      order.status = 'paid';
-      await order.save();
-    }
+    // If there is an unpaid remainder, keep the order pending and do not auto-create an offline paid record.
+    // This ensures addons are not applied until payment is completed.
 
     // If paid, apply addons to active subscription
-    if (order.status === 'paid' || order.status === 'partially_paid') {
+    if (order.status === 'paid') {
       // Increment coupon usage if applied
       if (coupon && coupon.code) {
         try { await require('./coupon.service').incrementUsage(coupon.code); } catch (e) { /* ignore */ }

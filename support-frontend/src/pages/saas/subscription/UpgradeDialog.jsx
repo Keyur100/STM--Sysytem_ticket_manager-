@@ -14,7 +14,7 @@ import {
 } from "@mui/material";
 import api from "../../../api/axios";
 import PlanSettingsStep from "../company/CompanyFormStepper/PlanSettingsStep";
-import AddonsStep from "../company/CompanyFormStepper/AddonsStep";
+// import AddonsStep from "../company/CompanyFormStepper/AddonsStep";
 import CompanyPaymentStep from "../company/CompanyFormStepper/CompanyPaymentStep";
 
 const steps = ["Plan Settings", "Add-ons", "Payment"];
@@ -126,8 +126,8 @@ export default function UpgradeDialog({ open, subscription, company, onClose, on
             plansOverride={plans}
           />
         );
-      case 1:
-        return <AddonsStep form={form} handleChange={handleChange} />;
+      // case 1:
+      //   return <AddonsStep form={form} handleChange={handleChange} />;
       case 2:
         return (
           <CompanyPaymentStep

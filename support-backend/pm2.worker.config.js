@@ -71,7 +71,7 @@ module.exports = {
     // ============================================
     {
       name: "saas-addon-expiry-worker",
-      script: "src/saas/workers/addonExpiry.worker.js",
+      script: "src/saas/workers/subscription/addonExpiry.worker.js",
       watch: false,
       instances: 1,
       exec_mode: "fork",
@@ -85,7 +85,7 @@ module.exports = {
     },
     {
       name: "saas-pending-addon-applier-worker",
-      script: "src/saas/workers/pendingAddonApplier.worker.js",
+      script: "src/saas/workers/subscription/pendingAddonApplier.worker.js",
       watch: false,
       instances: 1,
       exec_mode: "fork",

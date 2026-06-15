@@ -10,13 +10,12 @@ import {
 import { signupCompany } from "../../../../store/slices/saas/companySlice";
 
 import CompanyContactInfoStep from "./CompanyContactInfoStep";
-import AddonsStep from "./AddonsStep";
 import PlanSettingsStep from "./PlanSettingsStep";
 import BranchStep from "./BranchStep";
 import CompanyPaymentStep from "./CompanyPaymentStep";
 import api from "../../../../api/axios";
 
-const steps = ["Company & Contact Details", "Branch Details", "Plan Settings", "Add-ons", "Payment"];
+const steps = ["Company & Contact Details", "Branch Details", "Plan Settings", "Payment"];
 
 export default function CompanyFormStepper() {
   const dispatch = useDispatch();
@@ -40,7 +39,6 @@ export default function CompanyFormStepper() {
     gstNo: "",
     contact: { personName: "", email: "", phone: "", address: "" },
     plan: null,
-    selectedAddons: {},
   }), []);
 
   const [activeStep, setActiveStep] = useState(0);
@@ -106,7 +104,6 @@ export default function CompanyFormStepper() {
         },
         // planSnapshot is stored in company model and prefilled as 'plan' in form
         plan: planValue,
-        selectedAddons: companyDetails.selectedAddons || {},
         // Persisted branchId (newer backend) or fallback to first branch
         branchId: companyDetails.branchId || (companyDetails.branches && companyDetails.branches[0] ? companyDetails.branches[0]._id : null),
         // Persisted client user reference (newer backend)
@@ -304,7 +301,7 @@ export default function CompanyFormStepper() {
         return;
       }
 
-      // For other intermediate steps (plan/addons), update company as before
+      // For other intermediate steps (plan), update company as before
       if (form._id) {
         const data = {
           name: form.name,
@@ -312,7 +309,6 @@ export default function CompanyFormStepper() {
           panNo: form.panNo,
           gstNo: form.gstNo,
           contact: form.contact,
-          selectedAddons: form.selectedAddons,
         };
         if (!isTrialConvertFlow) {
           data.plan = form.plan;
@@ -352,8 +348,6 @@ export default function CompanyFormStepper() {
       case 2:
         return <PlanSettingsStep form={form} handleChange={handleChange} isTrialConvertFlow={isTrialConvertFlow} />;
       case 3:
-        return <AddonsStep form={form} handleChange={handleChange} />;
-      case 4:
         return (
           <CompanyPaymentStep
             form={form}

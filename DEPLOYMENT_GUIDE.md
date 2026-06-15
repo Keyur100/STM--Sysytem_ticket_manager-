@@ -1,5 +1,13 @@
 <!-- 
+for delete with volume
+<!-- docker compose down -v -->
 
+docker log check 
+docker compose logs backend
+docker compose logs mongo
+
+mongo 
+ docker compose exec mongo mongosh -u USERNAME -p 'PASSWORD' --authenticationDatabase admin
 🚀 Now On Your Server 
 
 # Backend
@@ -22,6 +30,7 @@ Then run:
 docker login
 docker compose pull
 docker compose up -d
+<!-- docker compose --env-file .env.production up -d -->
 
 //then run single time 
 1 START DOCKER DESKTOP 
